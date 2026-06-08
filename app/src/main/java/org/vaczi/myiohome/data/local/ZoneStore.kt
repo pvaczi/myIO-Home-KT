@@ -104,6 +104,21 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    /**
+     * Replace the entire zone configuration atomically (used when importing a shared settings backup):
+     * write the global zone list and each server's assignments, after dropping **every** existing
+     * `assign_*` blob so assignments belonging to no-longer-present servers don't linger as orphans.
+     */
+    suspend fun replaceAll(zones: List<Zone>, assignmentsByServer: Map<String, ZoneAssignments>) {
+        dataStore.edit { prefs ->
+            prefs.asMap().keys.filter { it.name.startsWith("assign_") }.forEach { prefs.remove(it) }
+            prefs[ZONES_GLOBAL] = json.encodeToString(zonesSerializer, zones)
+            for ((serverId, value) in assignmentsByServer) {
+                prefs[assignKey(serverId)] = json.encodeToString(ZoneAssignments.serializer(), value)
+            }
+        }
+    }
+
     /** Hide outputs that already have a zone (so only the unassigned remainder shows). Global toggle. */
     val hideZoned: Flow<Boolean> = dataStore.data.map { it[HIDE_ZONED] ?: false }
 

@@ -1,15 +1,22 @@
 package org.vaczi.myiohome
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.ZoneStore
@@ -18,9 +25,19 @@ import org.vaczi.myiohome.ui.MainScreen
 import org.vaczi.myiohome.ui.MyioActions
 import org.vaczi.myiohome.ui.MyioViewModel
 import org.vaczi.myiohome.ui.ServerSettingsScreen
+import org.vaczi.myiohome.ui.SettingsSharing
 import org.vaczi.myiohome.ui.theme.MyioHomeTheme
 
+/** A pending "import shared settings" prompt: a valid decoded backup awaiting confirmation, or invalid input. */
+private sealed interface ImportPrompt {
+    data class Ready(val backup: SettingsBackup) : ImportPrompt
+    object Invalid : ImportPrompt
+}
+
 class MainActivity : ComponentActivity() {
+
+    // Set when the app is opened on a shared settings file (ACTION_VIEW); drives the replace dialog.
+    private var importPrompt by mutableStateOf<ImportPrompt?>(null)
 
     // Server slots live in DataStore (SettingsStore). A fresh install starts empty (discovery-first):
     // the user scans the LAN or adds slots by hand. The active one is switchable from the top-bar title.
@@ -35,6 +52,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Only on a fresh start — on recreate (rotation) the same VIEW intent would re-prompt otherwise.
+        if (savedInstanceState == null) handleViewIntent(intent)
         setContent {
             val theme by viewModel.theme.collectAsStateWithLifecycle()
             MyioHomeTheme(theme = theme) {
@@ -103,6 +122,9 @@ class MainActivity : ComponentActivity() {
                             theme = theme,
                             onSelectTheme = viewModel::setTheme,
                             onEditServers = { navController.navigate("servers") },
+                            onShareSettings = {
+                                SettingsSharing.share(this@MainActivity, viewModel.buildSettingsBackup())
+                            },
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -122,7 +144,54 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+
+                // Opened on a shared settings file → confirm before replacing the current config.
+                when (val prompt = importPrompt) {
+                    is ImportPrompt.Ready -> AlertDialog(
+                        onDismissRequest = { importPrompt = null },
+                        title = { Text("Beállítások importálása") },
+                        text = {
+                            Text(
+                                "A megosztott fájl ${prompt.backup.servers.size} szervert és " +
+                                    "${prompt.backup.zones.size} zónát tartalmaz. Lecseréled vele a jelenlegi " +
+                                    "beállításaidat? A mostani szervereid és zónáid elvesznek.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.importSettings(prompt.backup)
+                                importPrompt = null
+                            }) { Text("Lecserélés") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { importPrompt = null }) { Text("Mégse") }
+                        },
+                    )
+                    ImportPrompt.Invalid -> AlertDialog(
+                        onDismissRequest = { importPrompt = null },
+                        title = { Text("Nem megnyitható") },
+                        text = { Text("Ez a fájl nem egy érvényes myIO Home beállításfájl.") },
+                        confirmButton = {
+                            TextButton(onClick = { importPrompt = null }) { Text("OK") }
+                        },
+                    )
+                    null -> {}
+                }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
+    }
+
+    /** If [intent] opened a shared file, read + validate it and arm the replace dialog (or an error). */
+    private fun handleViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val backup = SettingsSharing.readText(this, uri)?.let { SettingsBackup.decode(it) }
+        importPrompt = if (backup != null) ImportPrompt.Ready(backup) else ImportPrompt.Invalid
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,6 +38,7 @@ fun AppSettingsScreen(
     theme: AppTheme,
     onSelectTheme: (AppTheme) -> Unit,
     onEditServers: () -> Unit,
+    onShareSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -69,6 +71,20 @@ fun AppSettingsScreen(
                     selected = false,
                     role = Role.Button,
                     onClick = onEditServers,
+                ),
+            )
+
+            HorizontalDivider()
+
+            SectionHeader("Megosztás")
+            ListItem(
+                headlineContent = { Text("Beállítások megosztása…") },
+                supportingContent = { Text("Szerverek és zónák küldése e-mailben, SMS-ben stb.") },
+                leadingContent = { Icon(Icons.Filled.Share, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().selectable(
+                    selected = false,
+                    role = Role.Button,
+                    onClick = onShareSettings,
                 ),
             )
         }

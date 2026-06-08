@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.data.local.MyioServer
+import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.Zone
@@ -323,6 +324,33 @@ class MyioViewModel(
      * Add a new slot ([original] = null) or replace an existing one (matched by [original]'s id).
      * Editing preserves the id, so the active selection stays valid even if the host changed.
      */
+    // --- Settings backup (share / import) -------------------------------------------------------
+    //
+    // Export the whole user configuration (servers + theme + global zones + per-server assignments) as a
+    // single JSON blob for the share sheet; import replaces all of it wholesale on confirmation.
+
+    /** Build a shareable backup of the current settings (servers, theme, zones, assignments). */
+    fun buildSettingsBackup(): String = SettingsBackup.encode(
+        theme = theme.value,
+        servers = servers.value,
+        zones = globalZones.value,
+        assignments = allAssignments.value,
+    )
+
+    /**
+     * Replace **all** settings with [backup] (servers, theme, zones, assignments). The previous config is
+     * discarded. Selection is reset to the first imported server so [currentServer] stays valid; the poll
+     * loop re-points on the resulting emissions.
+     */
+    fun importSettings(backup: SettingsBackup) {
+        viewModelScope.launch {
+            settings.setTheme(backup.theme)
+            settings.saveServers(backup.servers)
+            zones.replaceAll(backup.zones, backup.assignments)
+            settings.selectServer(backup.servers.firstOrNull()?.id ?: "")
+        }
+    }
+
     fun upsertServer(original: MyioServer?, updated: MyioServer) {
         val list = servers.value.toMutableList()
         val idx = original?.let { o -> list.indexOfFirst { it.id == o.id } } ?: -1
