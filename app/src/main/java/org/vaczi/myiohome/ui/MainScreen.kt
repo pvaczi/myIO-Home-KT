@@ -57,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -88,6 +89,7 @@ import org.vaczi.myiohome.data.model.SensorKind
 import org.vaczi.myiohome.data.model.ServerState
 import org.vaczi.myiohome.data.model.outputKey
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -201,6 +203,12 @@ fun MainScreen(
         }
     }
 
+    // Aggregate ("Otthon (összes)") tabs live in the bottom nav like the per-server type tabs: page 0 is
+    // the "Összes" summary, pages 1..n are one global zone each. Swiping the pager and tapping the nav
+    // stay in sync (not persisted — the aggregate is a single virtual view). [scope] drives tab taps.
+    val scope = rememberCoroutineScope()
+    val aggregatePagerState = rememberPagerState(pageCount = { globalZones.size + 1 })
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -257,7 +265,26 @@ fun MainScreen(
             )
         },
         bottomBar = {
-            if (!isAggregate && visibleTabs.isNotEmpty()) {
+            if (isAggregate) {
+                if (globalZones.isNotEmpty()) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = aggregatePagerState.currentPage == 0,
+                            onClick = { scope.launch { aggregatePagerState.animateScrollToPage(0) } },
+                            icon = { Icon(Icons.Filled.Home, contentDescription = "Összes") },
+                            label = { Text("Összes") },
+                        )
+                        globalZones.forEachIndexed { i, zone ->
+                            NavigationBarItem(
+                                selected = aggregatePagerState.currentPage == i + 1,
+                                onClick = { scope.launch { aggregatePagerState.animateScrollToPage(i + 1) } },
+                                icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
+                                label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            )
+                        }
+                    }
+                }
+            } else if (visibleTabs.isNotEmpty()) {
                 NavigationBar {
                     visibleTabs.forEachIndexed { index, t ->
                         NavigationBarItem(
@@ -279,6 +306,7 @@ fun MainScreen(
                     perServer = aggregatePerServer,
                     assignments = aggregateAssignments,
                     actionsFor = aggregateActionsFor,
+                    pagerState = aggregatePagerState,
                     onAddZone = onAddZone,
                     onRenameZone = onRenameZone,
                     onDeleteZone = onDeleteZone,
