@@ -22,6 +22,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // Személyes sideload (Google Drive) → a gépi debug-kulccsal írjuk alá,
+            // hogy a release APK kulcskezelés nélkül telepíthető legyen.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
