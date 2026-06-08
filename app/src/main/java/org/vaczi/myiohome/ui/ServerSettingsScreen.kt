@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -196,7 +197,7 @@ private fun DiscoveryDialog(
                         singleLine = true,
                         enabled = !state.running,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = subnetMenuOpen) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable).fillMaxWidth(),
                     )
                     ExposedDropdownMenu(expanded = subnetMenuOpen, onDismissRequest = { subnetMenuOpen = false }) {
                         subnetCandidates.forEach { candidate ->
@@ -305,7 +306,7 @@ private fun ServerEditDialog(
                             label = { Text("/24 tartomány (gyorskitöltés)") },
                             placeholder = { Text("válassz…") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = prefixMenuOpen) },
-                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                         )
                         ExposedDropdownMenu(expanded = prefixMenuOpen, onDismissRequest = { prefixMenuOpen = false }) {
                             subnetCandidates.forEach { candidate ->
