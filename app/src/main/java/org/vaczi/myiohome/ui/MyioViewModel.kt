@@ -107,15 +107,6 @@ class MyioViewModel(
         viewModelScope.launch { settings.setTheme(value) }
     }
 
-    /** Poll interval in seconds (for the Settings UI). */
-    val pollIntervalSec: StateFlow<Int> =
-        settings.pollIntervalSec.stateIn(viewModelScope, SharingStarted.Eagerly, SettingsStore.DEFAULT_POLL_SEC)
-
-    /** Persist the poll interval; the running poll loop picks it up on its next tick. */
-    fun setPollInterval(sec: Int) {
-        viewModelScope.launch { settings.setPollIntervalSec(sec) }
-    }
-
     // --- Zones (global registry; per-server many-to-many assignment) ----------------------------
     //
     // Zones are global (shared across servers); assignment + member order are per server. The
@@ -243,9 +234,17 @@ class MyioViewModel(
     private val _selectedTab = MutableStateFlow(0)
     val selectedTab: StateFlow<Int> = _selectedTab.asStateFlow()
 
-    // Live poll interval (ms); tracks the persisted setting, applied on the loop's next tick.
-    @Volatile private var pollIntervalMs = SettingsStore.DEFAULT_POLL_SEC * 1_000L
     private val snapshotSaveIntervalMs = 30_000L
+
+    /**
+     * The poll interval (ms) for [serverId], read live from the current slot so an edit applies on the
+     * loop's next tick. Each server carries its own interval (per-server, not global); unknown ids and
+     * out-of-range values fall back to / are clamped around [SettingsStore.DEFAULT_POLL_SEC].
+     */
+    private fun pollIntervalMsFor(serverId: String?): Long {
+        val sec = servers.value.firstOrNull { it.id == serverId }?.pollIntervalSec ?: SettingsStore.DEFAULT_POLL_SEC
+        return sec.coerceIn(1, 60) * 1_000L
+    }
 
     /**
      * Bumped by every control command. A poll captures this before its network call; if it changed
@@ -260,10 +259,6 @@ class MyioViewModel(
     private var activeId: String? = null
 
     init {
-        // Keep the live poll interval in sync with the persisted setting (applied on the next tick).
-        viewModelScope.launch {
-            settings.pollIntervalSec.collect { pollIntervalMs = it * 1_000L }
-        }
         // Re-point the single-server poll loop whenever the selected slot changes (by id, so two slots
         // sharing a host still switch independently). Also load that server's last-open tab. In aggregate
         // mode [settings.selected] is null → this stops the single-server loop; [observeAggregate] drives
@@ -281,7 +276,7 @@ class MyioViewModel(
                 _selectedTab.value = settings.lastTab(server.id).first()
                 repo = repoFactory(server)
                 _ui.value = MyioUiState() // back to Connecting for the new device
-                pollJob = viewModelScope.launch { pollLoop() }
+                pollJob = viewModelScope.launch { pollLoop(server.id) }
             }
         }
         observeAggregate()
@@ -324,9 +319,9 @@ class MyioViewModel(
         }
     }
 
-    private suspend fun pollLoop() {
+    private suspend fun pollLoop(serverId: String) {
         val repo = repo ?: return
-        runPollLoop(repo, currentGen = { pollGeneration }) { transform -> _ui.update(transform) }
+        runPollLoop(repo, serverId, currentGen = { pollGeneration }) { transform -> _ui.update(transform) }
     }
 
     /**
@@ -341,6 +336,7 @@ class MyioViewModel(
      */
     private suspend fun runPollLoop(
         repo: MyioRepository,
+        serverId: String,
         currentGen: () -> Int,
         emit: (transform: (MyioUiState) -> MyioUiState) -> Unit,
     ) {
@@ -375,7 +371,7 @@ class MyioViewModel(
             } catch (e: Exception) {
                 emit { it.copy(status = ConnectionStatus.Error, error = e.message ?: e.toString()) }
             }
-            delay(pollIntervalMs)
+            delay(pollIntervalMsFor(serverId))
         }
     }
 
@@ -416,7 +412,7 @@ class MyioViewModel(
             val repo = repoFactory(server)
             aggregateRepos[server.id] = repo
             viewModelScope.launch {
-                runPollLoop(repo, currentGen = { aggregateGen[server.id] ?: 0 }) { transform ->
+                runPollLoop(repo, server.id, currentGen = { aggregateGen[server.id] ?: 0 }) { transform ->
                     updateServer(server.id, transform)
                 }
             }

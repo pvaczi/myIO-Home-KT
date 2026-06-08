@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.vaczi.myiohome.data.local.MyioServer
+import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.net.DiscoveredServer
 import org.vaczi.myiohome.data.net.localIpv4Subnets
 
@@ -259,6 +261,9 @@ private fun DiscoveryDialog(
 /** Wrapper so a closed dialog (null) is distinct from "add new" (Editing(server = null)). */
 private data class Editing(val server: MyioServer?)
 
+/** Preset poll intervals (seconds) offered in the server editor. */
+private val POLL_PRESETS = listOf(1, 2, 5, 10)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ServerEditDialog(
@@ -275,6 +280,7 @@ private fun ServerEditDialog(
     var port by remember { mutableStateOf((initial?.port ?: 80).toString()) }
     var user by remember { mutableStateOf(initial?.user ?: "admin") }
     var password by remember { mutableStateOf(initial?.password ?: "admin") }
+    var pollSec by remember { mutableStateOf(initial?.pollIntervalSec ?: SettingsStore.DEFAULT_POLL_SEC) }
     var prefixMenuOpen by remember { mutableStateOf(false) }
     val valid = name.isNotBlank() && host.isNotBlank() && port.toIntOrNull() != null
 
@@ -324,6 +330,20 @@ private fun ServerEditDialog(
                 )
                 OutlinedTextField(user, { user = it }, label = { Text("Felhasználó") }, singleLine = true)
                 OutlinedTextField(password, { password = it }, label = { Text("Jelszó") }, singleLine = true)
+                Text(
+                    "Frissítési időköz",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    POLL_PRESETS.forEach { sec ->
+                        FilterChip(
+                            selected = pollSec == sec,
+                            onClick = { pollSec = sec },
+                            label = { Text("$sec mp") },
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
@@ -338,6 +358,7 @@ private fun ServerEditDialog(
                             port = port.toInt(),
                             user = user,
                             password = password,
+                            pollIntervalSec = pollSec,
                         ),
                     )
                 },

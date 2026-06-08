@@ -36,8 +36,6 @@ import org.vaczi.myiohome.data.local.AppTheme
 fun AppSettingsScreen(
     theme: AppTheme,
     onSelectTheme: (AppTheme) -> Unit,
-    pollIntervalSec: Int,
-    onSelectPollInterval: (Int) -> Unit,
     onEditServers: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -58,13 +56,6 @@ fun AppSettingsScreen(
             SectionHeader("Téma")
             ThemeOption("Zöld (eredeti)", "A klasszikus myIO zöldes megjelenés", AppTheme.GREEN, theme, onSelectTheme)
             ThemeOption("Dinamikus / kék", "Material You – a háttérképből vett színek (Android 12+)", AppTheme.DYNAMIC, theme, onSelectTheme)
-
-            HorizontalDivider()
-
-            SectionHeader("Frissítési időköz")
-            POLL_PRESETS.forEach { sec ->
-                IntervalOption(sec, pollIntervalSec, onSelectPollInterval)
-            }
 
             HorizontalDivider()
 
@@ -107,30 +98,6 @@ private fun ThemeOption(
     ListItem(
         headlineContent = { Text(title) },
         supportingContent = { Text(subtitle) },
-        leadingContent = {
-            RadioButton(selected = isSelected, onClick = null) // row handles the click
-        },
-        modifier = Modifier.fillMaxWidth().selectable(
-            selected = isSelected,
-            role = Role.RadioButton,
-            onClick = { onSelect(value) },
-        ),
-    )
-}
-
-/** Preset poll intervals (seconds) offered in Settings. */
-private val POLL_PRESETS = listOf(1, 2, 5, 10)
-
-/** A single-choice poll-interval row (same RadioButton list pattern as [ThemeOption]). */
-@Composable
-private fun IntervalOption(
-    value: Int,
-    selected: Int,
-    onSelect: (Int) -> Unit,
-) {
-    val isSelected = value == selected
-    ListItem(
-        headlineContent = { Text("$value másodperc") },
         leadingContent = {
             RadioButton(selected = isSelected, onClick = null) // row handles the click
         },

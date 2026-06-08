@@ -32,6 +32,25 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun pollIntervalIsPerServerAndRoundTrips() {
+        val stored = listOf(
+            MyioServer("Gyors", "10.0.0.1", pollIntervalSec = 1),
+            MyioServer("Lassú", "10.0.0.2", pollIntervalSec = 10),
+        )
+        val parsed = SettingsStore.parseServers(Json.encodeToString(stored))
+        assertEquals(1, parsed[0].pollIntervalSec)
+        assertEquals(10, parsed[1].pollIntervalSec)
+    }
+
+    @Test
+    fun legacyServersWithoutPollIntervalDefault() {
+        // Slots persisted before the per-server interval existed must decode to the default.
+        val legacy = """[{"name":"A","host":"10.0.0.5"}]"""
+        val parsed = SettingsStore.parseServers(legacy)
+        assertEquals(SettingsStore.DEFAULT_POLL_SEC, parsed.single().pollIntervalSec)
+    }
+
+    @Test
     fun legacyServersWithoutIdGetDistinctIds() {
         // Pre-id persisted format with two slots sharing a host — this used to crash the editor
         // (duplicate LazyColumn keys). Each must now decode to a distinct, non-blank id.

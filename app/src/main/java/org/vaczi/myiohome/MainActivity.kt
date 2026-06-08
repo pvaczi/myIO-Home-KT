@@ -99,12 +99,9 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("settings") {
-                        val pollIntervalSec by viewModel.pollIntervalSec.collectAsStateWithLifecycle()
                         AppSettingsScreen(
                             theme = theme,
                             onSelectTheme = viewModel::setTheme,
-                            pollIntervalSec = pollIntervalSec,
-                            onSelectPollInterval = viewModel::setPollInterval,
                             onEditServers = { navController.navigate("servers") },
                             onBack = { navController.popBackStack() },
                         )

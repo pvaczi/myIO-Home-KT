@@ -36,6 +36,8 @@ data class MyioServer(
     val port: Int = 80,
     val user: String = "admin",
     val password: String = "admin",
+    /** How often this server is polled, in seconds (per-server; defaults to [SettingsStore.DEFAULT_POLL_SEC]). */
+    val pollIntervalSec: Int = SettingsStore.DEFAULT_POLL_SEC,
     val id: String = newId(),
 ) {
     fun toConfig(): ServerConfig = ServerConfig(host = host, port = port, user = user, password = password)
@@ -87,13 +89,6 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[THEME] = value.name }
     }
 
-    /** Poll interval in seconds (how often the active server is polled). Defaults to [DEFAULT_POLL_SEC]. */
-    val pollIntervalSec: Flow<Int> = dataStore.data.map { (it[POLL_INTERVAL] ?: DEFAULT_POLL_SEC).coerceIn(1, 60) }
-
-    suspend fun setPollIntervalSec(sec: Int) {
-        dataStore.edit { it[POLL_INTERVAL] = sec.coerceIn(1, 60) }
-    }
-
     /** Last-open tab index for a server (defaults to 0). */
     fun lastTab(serverId: String): Flow<Int> = dataStore.data.map { it[tabKey(serverId)] ?: 0 }
 
@@ -111,7 +106,6 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         private val SERVERS = stringPreferencesKey("servers")
         private val SELECTED = stringPreferencesKey("selected_host")
         private val THEME = stringPreferencesKey("theme")
-        private val POLL_INTERVAL = intPreferencesKey("poll_interval_sec")
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */
         const val AGGREGATE_ID = "__all_zones__"
