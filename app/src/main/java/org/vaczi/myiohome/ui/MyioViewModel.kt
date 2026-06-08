@@ -1,5 +1,8 @@
 package org.vaczi.myiohome.ui
 
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
@@ -258,6 +261,17 @@ class MyioViewModel(
     private var pollJob: Job? = null
     private var activeId: String? = null
 
+    /**
+     * Whether the app is in the foreground. Poll loops park while this is false so a backgrounded app
+     * stops hammering the servers (the device dislikes load when nobody's watching); they resume on the
+     * next tick when it returns. Driven by [ProcessLifecycleOwner] (app-level, ignores config changes).
+     */
+    private val foreground = MutableStateFlow(true)
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) { foreground.value = true }
+        override fun onStop(owner: LifecycleOwner) { foreground.value = false }
+    }
+
     init {
         // Re-point the single-server poll loop whenever the selected slot changes (by id, so two slots
         // sharing a host still switch independently). Also load that server's last-open tab. In aggregate
@@ -280,6 +294,12 @@ class MyioViewModel(
             }
         }
         observeAggregate()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
+    }
+
+    override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
+        super.onCleared()
     }
 
     /** Switch the active server slot by [id] (persisted; the poll loop re-points on the emission). */
@@ -346,6 +366,7 @@ class MyioViewModel(
         var refreshed = false
         var lastSnapshotMs = 0L
         while (true) {
+            foreground.first { it } // park while backgrounded → no polling when nobody's watching
             try {
                 val gen = currentGen()
                 val state = repo.poll()
