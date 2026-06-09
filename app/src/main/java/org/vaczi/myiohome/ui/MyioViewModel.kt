@@ -520,170 +520,128 @@ class MyioViewModel(
         }
     }
 
-    // Aggregate control: route to the owning server's repo, with per-server optimistic update.
-    fun aggToggleRelay(serverId: String, relay: RelayOutput) {
-        val target = !relay.on
-        aggregateOptimistic(serverId) { st ->
-            st.copy(relays = st.relays.map { if (it.id == relay.id) it.copy(on = target) else it })
-        }
-        aggregateSend(serverId, MyioCommands.relay(relay.id, target))
-    }
-
-    fun aggTogglePca(serverId: String, pca: PcaOutput) {
-        val turningOn = !pca.on
-        val target = if (turningOn) pca.turnOn else pca.turnOff
-        aggregateOptimistic(serverId) { st ->
-            st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = target) else it })
-        }
-        aggregateSend(serverId, MyioCommands.pcaOnOff(pca.id, turningOn))
-    }
-
-    fun aggSetPcaBrightness(serverId: String, pca: PcaOutput, value: Int) {
-        val v = value.coerceIn(0, 255)
-        aggregateOptimistic(serverId) { st ->
-            st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = v) else it })
-        }
-        aggregateSend(serverId, MyioCommands.pcaBrightness(pca.id, v))
-    }
-
-    fun aggTogglePwm(serverId: String, pwm: PwmOutput) {
-        val turningOn = !pwm.on
-        val target = if (turningOn) pwm.turnOn else pwm.turnOff
-        aggregateOptimistic(serverId) { st ->
-            st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = target) else it })
-        }
-        aggregateSend(serverId, MyioCommands.fetOnOff(pwm.id, turningOn))
-    }
-
-    fun aggSetPwmBrightness(serverId: String, pwm: PwmOutput, value: Int) {
-        val v = value.coerceIn(0, 255)
-        aggregateOptimistic(serverId) { st ->
-            st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = v) else it })
-        }
-        aggregateSend(serverId, MyioCommands.fetBrightness(pwm.id, v))
-    }
-
-    private inline fun aggregateOptimistic(serverId: String, crossinline transform: (ServerState) -> ServerState) {
-        aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1
-        updateServer(serverId) { it.copy(state = transform(it.state)) }
-    }
-
-    private fun aggregateSend(serverId: String, body: String) {
-        val repo = aggregateRepos[serverId] ?: return
-        viewModelScope.launch { runCatching { repo.sendCommand(body) } }
-    }
-
     // --- Control (POST) with optimistic updates -------------------------------------------------
     //
-    // Each handler flips the local state immediately so the UI feels instant, then fires the POST.
-    // [optimistic] also invalidates any in-flight poll (see [pollGeneration]) so a poll carrying the
-    // pre-command state can't briefly revert the control. The next poll confirms the real state;
-    // a failed/ignored command self-heals on that tick.
+    // The single-server and aggregate paths share one implementation via [ControlTarget]: each handler
+    // flips local state immediately (so the UI feels instant), then fires the POST. The optimistic step
+    // also bumps the relevant generation counter (see [pollGeneration] / [aggregateGen]) so a poll that
+    // carries the pre-command state can't briefly revert the control; the next poll confirms reality and
+    // a failed/ignored command self-heals on that tick. Commands always go out sequentially on a single
+    // coroutine (never concurrently — the device can't handle concurrent connections).
 
-    /** Toggle a relay (r_ON / r_OFF by current state; id is 1-based, matches the device id). */
-    fun toggleRelay(relay: RelayOutput) {
-        val target = !relay.on
-        optimistic { st ->
-            st.copy(relays = st.relays.map { if (it.id == relay.id) it.copy(on = target) else it })
+    /** A control destination: where the optimistic state lands and which repo the command is POSTed on. */
+    private interface ControlTarget {
+        fun optimistic(transform: (ServerState) -> ServerState)
+        fun send(vararg bodies: String)
+    }
+
+    /** The active single server: [ui] state guarded by [pollGeneration], on the current [repo]. */
+    private val singleTarget = object : ControlTarget {
+        override fun optimistic(transform: (ServerState) -> ServerState) {
+            pollGeneration++
+            _ui.update { it.copy(state = transform(it.state)) }
         }
+        override fun send(vararg bodies: String) = sendOn(repo, bodies)
+    }
+
+    /** One aggregate server: its [aggregate] slot guarded by [aggregateGen], on its own repo. */
+    private fun aggregateTarget(serverId: String) = object : ControlTarget {
+        override fun optimistic(transform: (ServerState) -> ServerState) {
+            aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1
+            updateServer(serverId) { it.copy(state = transform(it.state)) }
+        }
+        override fun send(vararg bodies: String) = sendOn(aggregateRepos[serverId], bodies)
+    }
+
+    /** Fire-and-forget: POST every body sequentially on one coroutine; the poll loop reconciles. */
+    private fun sendOn(repo: MyioRepository?, bodies: Array<out String>) {
+        val r = repo ?: return
+        viewModelScope.launch { for (b in bodies) runCatching { r.sendCommand(b) } }
+    }
+
+    // Shared control operations, used by both the single-server and aggregate public handlers below.
+
+    /** Toggle a relay (r_ON / r_OFF; id is 1-based, matches the device id). */
+    private fun ControlTarget.relayToggle(relay: RelayOutput) {
+        val target = !relay.on
+        optimistic { st -> st.copy(relays = st.relays.map { if (it.id == relay.id) it.copy(on = target) else it }) }
         send(MyioCommands.relay(relay.id, target))
     }
 
     /**
-     * Toggle a PCA output (PCA_ON / PCA_OFF; id is the real 2001+ device id). The device drives the
-     * level to the configured [PcaOutput.turnOn] / [PcaOutput.turnOff], so the optimistic value uses
-     * those (not a hard-coded 100%) to avoid a misleading flash before the poll confirms.
+     * Toggle a PCA output (PCA_ON / PCA_OFF; real 2001+ id). The device drives the level to its configured
+     * [PcaOutput.turnOn] / [PcaOutput.turnOff], so the optimistic value uses those (not a hard 100%) to
+     * avoid a misleading flash before the poll confirms.
      */
-    fun togglePca(pca: PcaOutput) {
+    private fun ControlTarget.pcaToggle(pca: PcaOutput) {
         val turningOn = !pca.on
         val target = if (turningOn) pca.turnOn else pca.turnOff
-        optimistic { st ->
-            st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = target) else it })
-        }
+        optimistic { st -> st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = target) else it }) }
         send(MyioCommands.pcaOnOff(pca.id, turningOn))
     }
 
     /** Set a PWM-capable PCA's brightness (PCA*<id>=<0..255>). */
-    fun setPcaBrightness(pca: PcaOutput, value: Int) {
+    private fun ControlTarget.pcaSet(pca: PcaOutput, value: Int) {
         val v = value.coerceIn(0, 255)
-        optimistic { st ->
-            st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = v) else it })
-        }
+        optimistic { st -> st.copy(pcas = st.pcas.map { if (it.id == pca.id) it.copy(state = v) else it }) }
         send(MyioCommands.pcaBrightness(pca.id, v))
     }
 
     /** Toggle a FET/PWM output (f_ON / f_OFF). On turn-on the device uses the configured turn-on level. */
-    fun togglePwm(pwm: PwmOutput) {
+    private fun ControlTarget.pwmToggle(pwm: PwmOutput) {
         val turningOn = !pwm.on
         val target = if (turningOn) pwm.turnOn else pwm.turnOff
-        optimistic { st ->
-            st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = target) else it })
-        }
+        optimistic { st -> st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = target) else it }) }
         send(MyioCommands.fetOnOff(pwm.id, turningOn))
     }
 
     /** Set a FET/PWM output's value (fet*<index>=<0..255>; index is 1-based = domain id − 100). */
-    fun setPwmBrightness(pwm: PwmOutput, value: Int) {
+    private fun ControlTarget.pwmSet(pwm: PwmOutput, value: Int) {
         val v = value.coerceIn(0, 255)
-        optimistic { st ->
-            st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = v) else it })
-        }
+        optimistic { st -> st.copy(pwms = st.pwms.map { if (it.id == pwm.id) it.copy(state = v) else it }) }
         send(MyioCommands.fetBrightness(pwm.id, v))
     }
 
-    // --- Thermostat setpoints (sensor-controlled outputs) ---------------------------------------
-    //
-    // Each output's on/off temperatures are persisted on the device; sens_out.json reports them back,
-    // so we optimistically update the local thresholds and let the next poll confirm. The two
-    // commands (on + off) go out sequentially on one coroutine (the device dislikes concurrency).
-
-    fun setRelayThermostat(relay: RelayOutput, onTenths: Int, offTenths: Int) {
-        optimistic { st ->
-            st.copy(relays = st.relays.map {
-                if (it.id == relay.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
-            })
-        }
-        sendAll(MyioCommands.relayThermostatOn(relay.id, onTenths), MyioCommands.relayThermostatOff(relay.id, offTenths))
+    // Thermostat setpoints (×10 °C): the on + off commands go out sequentially. The device persists them
+    // and sens_out.json reports them back, so we optimistically update the local thresholds. Currently
+    // only wired for the single server, but defined on the target for symmetry.
+    private fun ControlTarget.relayThermostat(relay: RelayOutput, onTenths: Int, offTenths: Int) {
+        optimistic { st -> st.copy(relays = st.relays.map {
+            if (it.id == relay.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
+        }) }
+        send(MyioCommands.relayThermostatOn(relay.id, onTenths), MyioCommands.relayThermostatOff(relay.id, offTenths))
     }
 
-    fun setPcaThermostat(pca: PcaOutput, onTenths: Int, offTenths: Int) {
-        optimistic { st ->
-            st.copy(pcas = st.pcas.map {
-                if (it.id == pca.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
-            })
-        }
-        sendAll(MyioCommands.pcaThermostatOn(pca.id, onTenths), MyioCommands.pcaThermostatOff(pca.id, offTenths))
+    private fun ControlTarget.pcaThermostat(pca: PcaOutput, onTenths: Int, offTenths: Int) {
+        optimistic { st -> st.copy(pcas = st.pcas.map {
+            if (it.id == pca.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
+        }) }
+        send(MyioCommands.pcaThermostatOn(pca.id, onTenths), MyioCommands.pcaThermostatOff(pca.id, offTenths))
     }
 
-    fun setPwmThermostat(pwm: PwmOutput, onTenths: Int, offTenths: Int) {
-        optimistic { st ->
-            st.copy(pwms = st.pwms.map {
-                if (it.id == pwm.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
-            })
-        }
-        sendAll(MyioCommands.fetThermostatOn(pwm.id, onTenths), MyioCommands.fetThermostatOff(pwm.id, offTenths))
+    private fun ControlTarget.pwmThermostat(pwm: PwmOutput, onTenths: Int, offTenths: Int) {
+        optimistic { st -> st.copy(pwms = st.pwms.map {
+            if (it.id == pwm.id) it.copy(sensorOnTenths = onTenths, sensorOffTenths = offTenths) else it
+        }) }
+        send(MyioCommands.fetThermostatOn(pwm.id, onTenths), MyioCommands.fetThermostatOff(pwm.id, offTenths))
     }
 
-    private inline fun optimistic(transform: (ServerState) -> ServerState) {
-        pollGeneration++
-        _ui.update { it.copy(state = transform(it.state)) }
-    }
+    // Public single-server handlers (MainActivity wires these to the UI callbacks).
+    fun toggleRelay(relay: RelayOutput) = singleTarget.relayToggle(relay)
+    fun togglePca(pca: PcaOutput) = singleTarget.pcaToggle(pca)
+    fun setPcaBrightness(pca: PcaOutput, value: Int) = singleTarget.pcaSet(pca, value)
+    fun togglePwm(pwm: PwmOutput) = singleTarget.pwmToggle(pwm)
+    fun setPwmBrightness(pwm: PwmOutput, value: Int) = singleTarget.pwmSet(pwm, value)
+    fun setRelayThermostat(relay: RelayOutput, onTenths: Int, offTenths: Int) = singleTarget.relayThermostat(relay, onTenths, offTenths)
+    fun setPcaThermostat(pca: PcaOutput, onTenths: Int, offTenths: Int) = singleTarget.pcaThermostat(pca, onTenths, offTenths)
+    fun setPwmThermostat(pwm: PwmOutput, onTenths: Int, offTenths: Int) = singleTarget.pwmThermostat(pwm, onTenths, offTenths)
 
-    /** Fire-and-forget command; the poll loop reconciles, so failures self-heal on the next tick. */
-    private fun send(body: String) {
-        val repo = repo ?: return
-        viewModelScope.launch {
-            runCatching { repo.sendCommand(body) }
-        }
-    }
-
-    /** Send several commands sequentially on one coroutine (never concurrently — device constraint). */
-    private fun sendAll(vararg bodies: String) {
-        val repo = repo ?: return
-        viewModelScope.launch {
-            for (body in bodies) runCatching { repo.sendCommand(body) }
-        }
-    }
+    // Public aggregate handlers (route to the owning server's target, per-server optimistic + gen guard).
+    fun aggToggleRelay(serverId: String, relay: RelayOutput) = aggregateTarget(serverId).relayToggle(relay)
+    fun aggTogglePca(serverId: String, pca: PcaOutput) = aggregateTarget(serverId).pcaToggle(pca)
+    fun aggSetPcaBrightness(serverId: String, pca: PcaOutput, value: Int) = aggregateTarget(serverId).pcaSet(pca, value)
+    fun aggTogglePwm(serverId: String, pwm: PwmOutput) = aggregateTarget(serverId).pwmToggle(pwm)
+    fun aggSetPwmBrightness(serverId: String, pwm: PwmOutput, value: Int) = aggregateTarget(serverId).pwmSet(pwm, value)
 
     companion object {
         fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore) = viewModelFactory {
