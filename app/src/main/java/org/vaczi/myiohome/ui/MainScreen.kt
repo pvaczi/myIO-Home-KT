@@ -22,10 +22,12 @@ import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeviceThermostat
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Thermostat
@@ -143,7 +145,10 @@ fun MainScreen(
     // (assign / reorder / visibility) mutually exclusive by construction.
     var editMode by remember { mutableStateOf(EditMode.NONE) }
     var activeZoneId by remember { mutableStateOf<String?>(null) }
+    // Live name filter for assign mode; cleared whenever assign mode is left so it never lingers.
+    var assignFilter by remember { mutableStateOf("") }
     val assignMode = editMode == EditMode.ASSIGN
+    LaunchedEffect(assignMode) { if (!assignMode) assignFilter = "" }
     val reorderMode = editMode == EditMode.REORDER
     val hideMode = editMode == EditMode.HIDE
     // Leaving expert mode drops every editing mode so the locked view shows only controls + the gear.
@@ -168,6 +173,7 @@ fun MainScreen(
         assignMode = assignMode,
         activeZoneId = activeZoneId,
         hideZoned = hideZoned,
+        nameFilter = assignFilter,
         onToggleAssignment = { key -> activeZoneId?.let { onToggleZoneAssignment(key, it) } },
     )
     // Only tabs that actually have something to show appear (empty Relék on a lighting controller,
@@ -365,6 +371,8 @@ fun MainScreen(
                             onAddZone = { name -> onAddZone(name)?.let { activeZoneId = it } },
                             hideZoned = hideZoned,
                             onSetHideZoned = onSetHideZoned,
+                            nameFilter = assignFilter,
+                            onSetNameFilter = { assignFilter = it },
                         )
                     }
                     if (hideMode) HideModeBar()
@@ -452,6 +460,8 @@ private fun AssignmentBar(
     onAddZone: (String) -> Unit,
     hideZoned: Boolean,
     onSetHideZoned: (Boolean) -> Unit,
+    nameFilter: String,
+    onSetNameFilter: (String) -> Unit,
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     Surface(
@@ -484,6 +494,22 @@ private fun AssignmentBar(
                     label = { Text("Új zóna") },
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = nameFilter,
+                onValueChange = onSetNameFilter,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("Szűrés név szerint (pl. terasz)") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (nameFilter.isNotEmpty()) {
+                        IconButton(onClick = { onSetNameFilter("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Szűrő törlése")
+                        }
+                    }
+                },
+            )
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Csak besorolatlanok", style = MaterialTheme.typography.bodyMedium)

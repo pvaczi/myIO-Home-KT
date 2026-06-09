@@ -66,6 +66,8 @@ data class ZoneUi(
     val assignMode: Boolean = false,
     val activeZoneId: String? = null,
     val hideZoned: Boolean = false,
+    /** Live, case-insensitive name filter typed in assign mode; blank shows everything. */
+    val nameFilter: String = "",
     /** Toggle the given output key in/out of the active zone (no-op if no active zone). */
     val onToggleAssignment: (String) -> Unit = {},
 )
@@ -100,7 +102,8 @@ internal fun <T> TypeTabList(
 ) = TileGrid(
     items.filter { name(it).isNotBlank() }
         .filterHidden(hideUi, expertMode, key)
-        .filterZoned(zoneUi, key),
+        .filterZoned(zoneUi, key)
+        .filterByName(zoneUi, name),
 ) { item ->
     when {
         hideUi.hideMode -> HideableTile(name(item), icon, key(item), hideUi)
@@ -112,6 +115,12 @@ internal fun <T> TypeTabList(
 /** In assign mode with "hide already-zoned" on, drop outputs that already belong to any zone. */
 private fun <T> List<T>.filterZoned(zoneUi: ZoneUi, key: (T) -> String): List<T> =
     if (zoneUi.assignMode && zoneUi.hideZoned) filter { !zoneUi.config.isAssigned(key(it)) } else this
+
+/** In assign mode, keep only items whose name contains the typed filter (case-insensitive). */
+private fun <T> List<T>.filterByName(zoneUi: ZoneUi, name: (T) -> String): List<T> {
+    val query = zoneUi.nameFilter.trim()
+    return if (zoneUi.assignMode && query.isNotEmpty()) filter { name(it).contains(query, ignoreCase = true) } else this
+}
 
 /**
  * Drop hidden outputs in non-expert mode (they vanish from the locked view). In expert mode they stay —
