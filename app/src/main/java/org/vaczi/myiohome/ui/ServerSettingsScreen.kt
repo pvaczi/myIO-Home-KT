@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,6 +65,8 @@ fun ServerSettingsScreen(
     onResetDiscovery: () -> Unit = {},
     defaultUser: String = "admin",
     defaultPassword: String = "admin",
+    /** Expert mode gates the per-server "hide from display" switch in the editor. */
+    expertMode: Boolean = true,
 ) {
     // null = dialog closed; Editing(null) = adding; Editing(server) = editing that slot.
     var editing by remember { mutableStateOf<Editing?>(null) }
@@ -105,7 +108,12 @@ fun ServerSettingsScreen(
             items(servers, key = { it.id }) { server ->
                 ListItem(
                     headlineContent = { Text(server.name) },
-                    supportingContent = { Text("${server.host}:${server.port}") },
+                    supportingContent = {
+                        Text(
+                            "${server.host}:${server.port}" +
+                                if (server.hidden) " · rejtett (nem-szakértő nézetben)" else "",
+                        )
+                    },
                     leadingContent = { Icon(Icons.Filled.Dns, contentDescription = null) },
                     trailingContent = {
                         Row {
@@ -128,6 +136,7 @@ fun ServerSettingsScreen(
         ServerEditDialog(
             initial = target.server,
             subnetCandidates = subnetCandidates,
+            expertMode = expertMode,
             onDismiss = { editing = null },
             onConfirm = { updated -> onSave(target.server, updated); editing = null },
         )
@@ -270,6 +279,7 @@ private val POLL_PRESETS = listOf(1, 2, 5, 10)
 private fun ServerEditDialog(
     initial: MyioServer?,
     subnetCandidates: List<String>,
+    expertMode: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (MyioServer) -> Unit,
 ) {
@@ -282,6 +292,7 @@ private fun ServerEditDialog(
     var user by remember { mutableStateOf(initial?.user ?: "admin") }
     var password by remember { mutableStateOf(initial?.password ?: "admin") }
     var pollSec by remember { mutableStateOf(initial?.pollIntervalSec ?: SettingsStore.DEFAULT_POLL_SEC) }
+    var hidden by remember { mutableStateOf(initial?.hidden ?: false) }
     var prefixMenuOpen by remember { mutableStateOf(false) }
     val valid = name.isNotBlank() && host.isNotBlank() && port.toIntOrNull() != null
 
@@ -345,6 +356,20 @@ private fun ServerEditDialog(
                         )
                     }
                 }
+                if (expertMode) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Elrejtés a megjelenítésből", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Nem-szakértő nézetben nem választható; a zónázott kimenetei az " +
+                                    "„Otthon (összes)” nézetben így is megjelennek.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = hidden, onCheckedChange = { hidden = it })
+                    }
+                }
             }
         },
         confirmButton = {
@@ -360,6 +385,7 @@ private fun ServerEditDialog(
                             user = user,
                             password = password,
                             pollIntervalSec = pollSec,
+                            hidden = hidden,
                         ),
                     )
                 },

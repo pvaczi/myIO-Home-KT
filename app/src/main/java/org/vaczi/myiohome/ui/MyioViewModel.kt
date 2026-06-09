@@ -111,6 +111,31 @@ class MyioViewModel(
         viewModelScope.launch { settings.setTheme(value) }
     }
 
+    /** Expert mode (persisted; defaults true). False = locked/simplified view (see [SettingsStore.expertMode]). */
+    val expertMode: StateFlow<Boolean> =
+        settings.expertMode.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setExpertMode(value: Boolean) {
+        viewModelScope.launch { settings.setExpertMode(value) }
+    }
+
+    /**
+     * Toggle whether [outputKey] is hidden from non-expert display on the **current** server. Stored on the
+     * server slot ([MyioServer.hiddenOutputs]) so it travels with the slot (and the shared backup). Editing
+     * the slot's content (not its id) doesn't re-point the poll loop.
+     */
+    fun toggleOutputHidden(outputKey: String) {
+        val server = currentServer.value ?: return
+        val updated = if (outputKey in server.hiddenOutputs) server.hiddenOutputs - outputKey
+        else server.hiddenOutputs + outputKey
+        saveServerEdit(server.copy(hiddenOutputs = updated))
+    }
+
+    private fun saveServerEdit(updated: MyioServer) {
+        val list = servers.value.map { if (it.id == updated.id) updated else it }
+        viewModelScope.launch { settings.saveServers(list) }
+    }
+
     // --- Zones (global registry; per-server many-to-many assignment) ----------------------------
     //
     // Zones are global (shared across servers); assignment + member order are per server. The
@@ -295,6 +320,18 @@ class MyioViewModel(
             }
         }
         observeAggregate()
+        // In non-expert (locked) mode the active slot may be one the owner hid: the switcher won't list
+        // it, so steer off it to the safe aggregate (or the first visible slot) rather than leave its
+        // per-server control screen showing. Settles immediately once redirected (aggregate → sel null).
+        viewModelScope.launch {
+            combine(settings.expertMode, settings.selected, settings.servers) { e, sel, list -> Triple(e, sel, list) }
+                .collect { (expert, sel, list) ->
+                    if (!expert && sel != null && sel.hidden) {
+                        if (list.size > 1) settings.selectAggregate()
+                        else list.firstOrNull { !it.hidden }?.let { settings.selectServer(it.id) }
+                    }
+                }
+        }
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
     }
 

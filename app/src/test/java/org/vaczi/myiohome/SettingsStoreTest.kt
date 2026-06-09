@@ -51,6 +51,20 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun hiddenFlagsRoundTripAndDefaultOff() {
+        val stored = listOf(
+            MyioServer("Rejtett", "10.0.0.1", hidden = true, hiddenOutputs = listOf("R3", "ST5")),
+            MyioServer("Sima", "10.0.0.2"),
+        )
+        val parsed = SettingsStore.parseServers(Json.encodeToString(stored))
+        assertEquals(true, parsed[0].hidden)
+        assertEquals(listOf("R3", "ST5"), parsed[0].hiddenOutputs)
+        // Defaults: legacy slots (no fields) decode as visible with nothing hidden.
+        assertEquals(false, parsed[1].hidden)
+        assertEquals(emptyList<String>(), parsed[1].hiddenOutputs)
+    }
+
+    @Test
     fun legacyServersWithoutIdGetDistinctIds() {
         // Pre-id persisted format with two slots sharing a host — this used to crash the editor
         // (duplicate LazyColumn keys). Each must now decode to a distinct, non-blank id.

@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 val servers by viewModel.servers.collectAsStateWithLifecycle()
                 val currentServer by viewModel.currentServer.collectAsStateWithLifecycle()
                 val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+                val expertMode by viewModel.expertMode.collectAsStateWithLifecycle()
                 val zoneConfig by viewModel.zoneConfig.collectAsStateWithLifecycle()
                 val hideZoned by viewModel.hideZoned.collectAsStateWithLifecycle()
                 // Aggregate ("Otthon (összes)") state: global zones + every polled server's live state.
@@ -101,6 +102,8 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { navController.navigate("settings") },
                             selectedTab = selectedTab,
                             onSelectTab = viewModel::selectTab,
+                            expertMode = expertMode,
+                            onToggleOutputHidden = viewModel::toggleOutputHidden,
                             zoneConfig = zoneConfig,
                             hideZoned = hideZoned,
                             onSetHideZoned = viewModel::setHideZoned,
@@ -125,6 +128,8 @@ class MainActivity : ComponentActivity() {
                             onShareSettings = {
                                 SettingsSharing.share(this@MainActivity, viewModel.buildSettingsBackup())
                             },
+                            expertMode = expertMode,
+                            onSetExpertMode = viewModel::setExpertMode,
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -141,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             // myIO factory default credentials (admin/admin) — generic, not site-specific.
                             defaultUser = currentServer?.user ?: "admin",
                             defaultPassword = currentServer?.password ?: "admin",
+                            expertMode = expertMode,
                         )
                     }
                 }

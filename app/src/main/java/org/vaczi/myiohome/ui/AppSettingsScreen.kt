@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -19,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -39,6 +41,8 @@ fun AppSettingsScreen(
     onSelectTheme: (AppTheme) -> Unit,
     onEditServers: () -> Unit,
     onShareSettings: () -> Unit,
+    expertMode: Boolean,
+    onSetExpertMode: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -85,6 +89,27 @@ fun AppSettingsScreen(
                     selected = false,
                     role = Role.Button,
                     onClick = onShareSettings,
+                ),
+            )
+
+            HorizontalDivider()
+
+            SectionHeader("Speciális")
+            ListItem(
+                headlineContent = { Text("Szakértő mód") },
+                supportingContent = {
+                    Text(
+                        "Bekapcsolva: szerkesztheted a zónákat, és elrejthetsz entitásokat / szervereket a " +
+                            "megjelenítésből. Kikapcsolva: egyszerűsített, zárolt nézet — csak a bekapcsolt " +
+                            "elemek látszanak, a szerkesztő eszközök rejtve.",
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.Tune, contentDescription = null) },
+                trailingContent = { Switch(checked = expertMode, onCheckedChange = onSetExpertMode) },
+                modifier = Modifier.fillMaxWidth().selectable(
+                    selected = expertMode,
+                    role = Role.Switch,
+                    onClick = { onSetExpertMode(!expertMode) },
                 ),
             )
         }

@@ -3,6 +3,7 @@ package org.vaczi.myiohome.data.local
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -38,6 +39,17 @@ data class MyioServer(
     val password: String = "admin",
     /** How often this server is polled, in seconds (per-server; defaults to [SettingsStore.DEFAULT_POLL_SEC]). */
     val pollIntervalSec: Int = SettingsStore.DEFAULT_POLL_SEC,
+    /**
+     * Hidden from **display** in non-expert mode: the slot drops out of the server switcher so a
+     * simplified (e.g. family) view can't open its per-server control screen. Its zoned outputs still
+     * surface in the "Otthon (összes)" aggregate. No effect in expert mode. (Default false → unchanged.)
+     */
+    val hidden: Boolean = false,
+    /**
+     * Output keys (see `outputKey()`) hidden from display in non-expert mode — dropped **everywhere**,
+     * including the home/aggregate dashboards. No effect in expert mode. (Default empty → unchanged.)
+     */
+    val hiddenOutputs: List<String> = emptyList(),
     val id: String = newId(),
 ) {
     fun toConfig(): ServerConfig = ServerConfig(host = host, port = port, user = user, password = password)
@@ -89,6 +101,17 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[THEME] = value.name }
     }
 
+    /**
+     * Expert mode (defaults to **true** → existing behaviour unchanged). When false the app shows a
+     * locked, simplified view: servers/outputs marked hidden are filtered from display, and the
+     * per-server editing tools (zone assign / reorder / visibility) are hidden.
+     */
+    val expertMode: Flow<Boolean> = dataStore.data.map { it[EXPERT] ?: true }
+
+    suspend fun setExpertMode(value: Boolean) {
+        dataStore.edit { it[EXPERT] = value }
+    }
+
     /** Last-open tab index for a server (defaults to 0). */
     fun lastTab(serverId: String): Flow<Int> = dataStore.data.map { it[tabKey(serverId)] ?: 0 }
 
@@ -106,6 +129,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         private val SERVERS = stringPreferencesKey("servers")
         private val SELECTED = stringPreferencesKey("selected_host")
         private val THEME = stringPreferencesKey("theme")
+        private val EXPERT = booleanPreferencesKey("expert_mode")
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */
         const val AGGREGATE_ID = "__all_zones__"

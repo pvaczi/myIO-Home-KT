@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.horizontalScroll
@@ -129,6 +132,18 @@ data class ZoneUi(
     val onToggleAssignment: (String) -> Unit = {},
 )
 
+/**
+ * Per-tile visibility state for the type-tab lists (expert-only "visibility mode"). While [hideMode] is
+ * on, tiles render as uniform [HideableTile]s (icon + name + eye/eye-off) that toggle the output's hidden
+ * flag on a single tap; [hiddenKeys] marks which are currently hidden. Outside hide mode this is inert.
+ * Hidden outputs are filtered out only in **non-expert** mode (in expert mode everything stays visible).
+ */
+data class HideUi(
+    val hideMode: Boolean = false,
+    val hiddenKeys: Set<String> = emptySet(),
+    val onToggleHidden: (String) -> Unit = {},
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -142,6 +157,10 @@ fun MainScreen(
     onOpenSettings: () -> Unit = {},
     selectedTab: Int = 0,
     onSelectTab: (Int) -> Unit = {},
+    // Expert mode: when false, hidden servers/outputs are filtered from display and the per-server
+    // editing tools (assign / reorder / visibility) are hidden — a locked, simplified view.
+    expertMode: Boolean = true,
+    onToggleOutputHidden: (outputKey: String) -> Unit = {},
     zoneConfig: ZoneConfig = ZoneConfig(),
     hideZoned: Boolean = false,
     onSetHideZoned: (Boolean) -> Unit = {},
@@ -164,12 +183,27 @@ fun MainScreen(
     var activeZoneId by remember { mutableStateOf<String?>(null) }
     // Reorder mode (HOME tab only): a separate top-bar toggle showing up/down arrows on zones + members.
     var reorderMode by remember { mutableStateOf(false) }
+    // Visibility mode (expert only): tap tiles on the type tabs to hide/show them in non-expert view.
+    var hideMode by remember { mutableStateOf(false) }
+    // Leaving expert mode drops every editing mode so the locked view shows only controls + the gear.
+    LaunchedEffect(expertMode) {
+        if (!expertMode) { assignMode = false; reorderMode = false; hideMode = false }
+    }
     // Keep the active zone valid as zones change (e.g. one gets deleted); default to the first zone.
     LaunchedEffect(zoneConfig.zones, assignMode) {
         if (assignMode && zoneConfig.zones.none { it.id == activeZoneId }) {
             activeZoneId = zoneConfig.zones.firstOrNull()?.id
         }
     }
+    // Hidden-output sets, derived from the slots. In expert mode nothing is filtered (full visibility);
+    // in non-expert mode hidden outputs disappear from every view, including the home/aggregate dashboards.
+    val hiddenKeys = currentServer?.hiddenOutputs?.toSet() ?: emptySet()
+    val hideUi = HideUi(hideMode = hideMode, hiddenKeys = hiddenKeys, onToggleHidden = onToggleOutputHidden)
+    val homeExclude = if (expertMode) emptySet() else hiddenKeys
+    val aggregateHiddenByServer =
+        if (expertMode) emptyMap() else servers.associate { it.id to it.hiddenOutputs.toSet() }
+    // The switcher only lists hidden servers in expert mode; non-expert sees just the enabled slots.
+    val switcherServers = if (expertMode) servers else servers.filterNot { it.hidden }
     val zoneUi = ZoneUi(
         config = zoneConfig,
         assignMode = assignMode,
@@ -216,7 +250,7 @@ fun MainScreen(
                 title = {
                     ServerTitle(
                         ui = ui,
-                        servers = servers,
+                        servers = switcherServers,
                         current = currentServer,
                         onSelect = onSelectServer,
                         isAggregate = isAggregate,
@@ -226,11 +260,13 @@ fun MainScreen(
                     )
                 },
                 actions = {
+                    // Editing tools (reorder / assign / visibility) are expert-only — a non-expert locked
+                    // view shows just the controls and the gear, so nothing can be rearranged by accident.
                     // Reorder toggle: HOME tab only (zones + within-zone members get up/down arrows).
-                    if (!isAggregate && currentServer != null && currentTab == Tab.HOME && zoneConfig.zones.isNotEmpty()) {
+                    if (expertMode && !isAggregate && currentServer != null && currentTab == Tab.HOME && zoneConfig.zones.isNotEmpty()) {
                         IconButton(onClick = {
                             reorderMode = !reorderMode
-                            if (reorderMode) assignMode = false
+                            if (reorderMode) { assignMode = false; hideMode = false }
                         }) {
                             Icon(
                                 Icons.Filled.SwapVert,
@@ -241,12 +277,13 @@ fun MainScreen(
                         }
                     }
                     // Tag toggle: enter/leave zone-assignment mode (only meaningful when tabs exist).
-                    if (!isAggregate && currentServer != null && visibleTabs.isNotEmpty()) {
+                    if (expertMode && !isAggregate && currentServer != null && visibleTabs.isNotEmpty()) {
                         IconButton(onClick = {
                             val entering = !assignMode
                             assignMode = entering
                             if (entering) {
                                 reorderMode = false
+                                hideMode = false
                                 if (activeZoneId == null) activeZoneId = zoneConfig.zones.firstOrNull()?.id
                             }
                         }) {
@@ -254,6 +291,21 @@ fun MainScreen(
                                 Icons.AutoMirrored.Filled.Label,
                                 contentDescription = if (assignMode) "Besorolás mód kikapcsolása" else "Besorolás zónákba",
                                 tint = if (assignMode) MaterialTheme.colorScheme.primary
+                                else LocalContentColor.current,
+                            )
+                        }
+                    }
+                    // Visibility toggle: enter/leave hide mode (tap a tile on a type tab to hide/show it).
+                    if (expertMode && !isAggregate && currentServer != null && visibleTabs.isNotEmpty()) {
+                        IconButton(onClick = {
+                            val entering = !hideMode
+                            hideMode = entering
+                            if (entering) { assignMode = false; reorderMode = false }
+                        }) {
+                            Icon(
+                                if (hideMode) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (hideMode) "Láthatóság mód kikapcsolása" else "Entitások elrejtése",
+                                tint = if (hideMode) MaterialTheme.colorScheme.primary
                                 else LocalContentColor.current,
                             )
                         }
@@ -305,6 +357,7 @@ fun MainScreen(
                     servers = servers,
                     perServer = aggregatePerServer,
                     assignments = aggregateAssignments,
+                    hiddenByServer = aggregateHiddenByServer,
                     actionsFor = aggregateActionsFor,
                     pagerState = aggregatePagerState,
                     onAddZone = onAddZone,
@@ -362,6 +415,7 @@ fun MainScreen(
                             onSetHideZoned = onSetHideZoned,
                         )
                     }
+                    if (hideMode) HideModeBar()
                     HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                         when (visibleTabs[page]) {
                             Tab.HOME -> HomeScreen(
@@ -370,16 +424,17 @@ fun MainScreen(
                                 actions = actions,
                                 enabled = controlsEnabled,
                                 reorderMode = reorderMode,
+                                hiddenKeys = homeExclude,
                                 onAddZone = onAddZone,
                                 onRenameZone = onRenameZone,
                                 onDeleteZone = onDeleteZone,
                                 onMoveZone = onMoveZone,
                                 onReorderMembers = onReorderZoneMembers,
                             )
-                            Tab.RELAYS -> RelayList(ui.state.relays, actions, controlsEnabled, zoneUi)
-                            Tab.PCA -> PcaList(ui.state.pcas, actions, controlsEnabled, zoneUi)
-                            Tab.DIMMERS -> DimmerList(ui.state.pwms, actions, controlsEnabled, zoneUi)
-                            Tab.SENSORS -> SensorList(ui.state.sensors, zoneUi)
+                            Tab.RELAYS -> RelayList(ui.state.relays, actions, controlsEnabled, zoneUi, hideUi, expertMode)
+                            Tab.PCA -> PcaList(ui.state.pcas, actions, controlsEnabled, zoneUi, hideUi, expertMode)
+                            Tab.DIMMERS -> DimmerList(ui.state.pwms, actions, controlsEnabled, zoneUi, hideUi, expertMode)
+                            Tab.SENSORS -> SensorList(ui.state.sensors, zoneUi, hideUi, expertMode)
                             Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled)
                         }
                     }
@@ -409,36 +464,55 @@ private fun statusLine(ui: MyioUiState): String = when (ui.status) {
 }
 
 @Composable
-private fun RelayList(items: List<RelayOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi) =
-    TileGrid(items.filter { it.name.isNotBlank() }.filterZoned(zoneUi) { it.outputKey() }) { r ->
-        if (zoneUi.assignMode) AssignableTile(r.name, Icons.Filled.Power, r.outputKey(), zoneUi)
-        else RelayControlTile(r, actions, enabled)
+private fun RelayList(items: List<RelayOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi, hideUi: HideUi, expertMode: Boolean) =
+    TileGrid(items.filter { it.name.isNotBlank() }.filterHidden(hideUi, expertMode) { it.outputKey() }.filterZoned(zoneUi) { it.outputKey() }) { r ->
+        when {
+            hideUi.hideMode -> HideableTile(r.name, Icons.Filled.Power, r.outputKey(), hideUi)
+            zoneUi.assignMode -> AssignableTile(r.name, Icons.Filled.Power, r.outputKey(), zoneUi)
+            else -> RelayControlTile(r, actions, enabled)
+        }
     }
 
 @Composable
-private fun PcaList(items: List<PcaOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi) =
-    TileGrid(items.filter { it.name.isNotBlank() }.filterZoned(zoneUi) { it.outputKey() }) { p ->
-        if (zoneUi.assignMode) AssignableTile(p.name, Icons.Filled.Lightbulb, p.outputKey(), zoneUi)
-        else PcaControlTile(p, actions, enabled)
+private fun PcaList(items: List<PcaOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi, hideUi: HideUi, expertMode: Boolean) =
+    TileGrid(items.filter { it.name.isNotBlank() }.filterHidden(hideUi, expertMode) { it.outputKey() }.filterZoned(zoneUi) { it.outputKey() }) { p ->
+        when {
+            hideUi.hideMode -> HideableTile(p.name, Icons.Filled.Lightbulb, p.outputKey(), hideUi)
+            zoneUi.assignMode -> AssignableTile(p.name, Icons.Filled.Lightbulb, p.outputKey(), zoneUi)
+            else -> PcaControlTile(p, actions, enabled)
+        }
     }
 
 @Composable
-private fun DimmerList(items: List<PwmOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi) =
-    TileGrid(items.filter { it.name.isNotBlank() }.filterZoned(zoneUi) { it.outputKey() }) { d ->
-        if (zoneUi.assignMode) AssignableTile(d.name, Icons.Filled.Lightbulb, d.outputKey(), zoneUi)
-        else PwmControlTile(d, actions, enabled)
+private fun DimmerList(items: List<PwmOutput>, actions: MyioActions, enabled: Boolean, zoneUi: ZoneUi, hideUi: HideUi, expertMode: Boolean) =
+    TileGrid(items.filter { it.name.isNotBlank() }.filterHidden(hideUi, expertMode) { it.outputKey() }.filterZoned(zoneUi) { it.outputKey() }) { d ->
+        when {
+            hideUi.hideMode -> HideableTile(d.name, Icons.Filled.Lightbulb, d.outputKey(), hideUi)
+            zoneUi.assignMode -> AssignableTile(d.name, Icons.Filled.Lightbulb, d.outputKey(), zoneUi)
+            else -> PwmControlTile(d, actions, enabled)
+        }
     }
 
 @Composable
-private fun SensorList(items: List<Sensor>, zoneUi: ZoneUi) =
-    TileGrid(items.filter { it.name.isNotBlank() }.filterZoned(zoneUi) { it.outputKey() }) { s ->
-        if (zoneUi.assignMode) AssignableTile(s.name, Icons.Filled.Thermostat, s.outputKey(), zoneUi)
-        else SensorTile(s.name, formatSensor(s))
+private fun SensorList(items: List<Sensor>, zoneUi: ZoneUi, hideUi: HideUi, expertMode: Boolean) =
+    TileGrid(items.filter { it.name.isNotBlank() }.filterHidden(hideUi, expertMode) { it.outputKey() }.filterZoned(zoneUi) { it.outputKey() }) { s ->
+        when {
+            hideUi.hideMode -> HideableTile(s.name, Icons.Filled.Thermostat, s.outputKey(), hideUi)
+            zoneUi.assignMode -> AssignableTile(s.name, Icons.Filled.Thermostat, s.outputKey(), zoneUi)
+            else -> SensorTile(s.name, formatSensor(s))
+        }
     }
 
 /** In assign mode with "hide already-zoned" on, drop outputs that already belong to any zone. */
 private fun <T> List<T>.filterZoned(zoneUi: ZoneUi, key: (T) -> String): List<T> =
     if (zoneUi.assignMode && zoneUi.hideZoned) filter { !zoneUi.config.isAssigned(key(it)) } else this
+
+/**
+ * Drop hidden outputs in non-expert mode (they vanish from the locked view). In expert mode they stay —
+ * the visibility mode shows them (struck-through) so the owner can toggle them back on.
+ */
+private fun <T> List<T>.filterHidden(hideUi: HideUi, expertMode: Boolean, key: (T) -> String): List<T> =
+    if (expertMode) this else filter { key(it) !in hideUi.hiddenKeys }
 
 // Live control tiles, shared by the type tabs and the Otthon (zone) dashboard so both render an
 // output identically. Each maps a domain output to its appropriate tile + control callback.
@@ -650,6 +724,60 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
                 Icon(Icons.Filled.Check, contentDescription = "Hozzárendelve", modifier = Modifier.size(20.dp))
             }
         }
+    }
+}
+
+/**
+ * Uniform tile shown in visibility mode (replaces the control tiles): icon + name + an eye/eye-off badge.
+ * Hidden outputs render struck-through and dimmed; one tap toggles the hidden flag. Used on the type tabs
+ * only (the home/aggregate dashboards just filter hidden outputs out in non-expert mode).
+ */
+@Composable
+private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi) {
+    val hidden = outputKey in hideUi.hiddenKeys
+    Surface(
+        color = if (hidden) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
+        contentColor = if (hidden) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().clickable { hideUi.onToggleHidden(outputKey) },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyMedium,
+                textDecoration = if (hidden) TextDecoration.LineThrough else null,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                if (hidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                contentDescription = if (hidden) "Rejtett" else "Látható",
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+/** A thin tonal hint bar shown above the tabs while visibility mode is on (MD mode feedback). */
+@Composable
+private fun HideModeBar() {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            "Koppints egy csempére, hogy elrejtsd vagy megmutasd nem-szakértő nézetben.",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
     }
 }
 
