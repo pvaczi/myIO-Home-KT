@@ -34,7 +34,6 @@ data class PcaDto(
     val id: Int,
     val state: Int = 0,
     val pwm: Int = 0,
-    val mixer: Int = 0,
     val sensor: Int = 0,
     val sensorON: Int = 0,
     val sensorOFF: Int = 0,
@@ -73,6 +72,5 @@ data class InfoDto(
     val version: String = "",
     @SerialName("RQ") val rq: String = "0",
     @SerialName("PCAQ") val pcaq: String = "0",
-    @SerialName("CPU") val cpu: String = "",
     val api: Int = 0,
 )

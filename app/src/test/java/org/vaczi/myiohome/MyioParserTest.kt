@@ -42,7 +42,6 @@ class MyioParserTest {
         assertTrue(relay1.on)
         assertEquals(53, relay1.sensorId)
         assertEquals(230, relay1.sensorOnTenths)
-        assertTrue(relay1.sensorControlled)
 
         val pca2003 = state.pcas.first { it.id == 2003 }
         assertEquals(255, pca2003.state)

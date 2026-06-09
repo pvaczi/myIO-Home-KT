@@ -22,9 +22,7 @@ data class RelayOutput(
     val sensorId: Int = 0,
     val sensorOnTenths: Int = 0,   // ×10 → °C (e.g. 230 = 23.0 °C)
     val sensorOffTenths: Int = 0,
-) {
-    val sensorControlled: Boolean get() = sensorId != 0
-}
+)
 
 /**
  * PCA output (id 2001..2128). state 0..255; isPwm = brightness controllable.
@@ -43,7 +41,6 @@ data class PcaOutput(
     val turnOff: Int = 0,
 ) {
     val on: Boolean get() = state != 0
-    val sensorControlled: Boolean get() = sensorId != 0
 }
 
 /**
@@ -62,7 +59,6 @@ data class PwmOutput(
     val turnOff: Int = 0,
 ) {
     val on: Boolean get() = state != 0
-    val sensorControlled: Boolean get() = sensorId != 0
 }
 
 @Serializable
