@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,10 +15,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -277,22 +281,11 @@ fun MainScreen(
         bottomBar = {
             if (isAggregate) {
                 if (globalZones.isNotEmpty()) {
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = aggregatePagerState.currentPage == 0,
-                            onClick = { scope.launch { aggregatePagerState.animateScrollToPage(0) } },
-                            icon = { Icon(Icons.Filled.Home, contentDescription = "Összes") },
-                            label = { Text("Összes") },
-                        )
-                        globalZones.forEachIndexed { i, zone ->
-                            NavigationBarItem(
-                                selected = aggregatePagerState.currentPage == i + 1,
-                                onClick = { scope.launch { aggregatePagerState.animateScrollToPage(i + 1) } },
-                                icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
-                                label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            )
-                        }
-                    }
+                    AggregateBottomBar(
+                        zones = globalZones,
+                        pagerState = aggregatePagerState,
+                        onSelectPage = { page -> scope.launch { aggregatePagerState.animateScrollToPage(page) } },
+                    )
                 }
             } else if (visibleTabs.isNotEmpty()) {
                 NavigationBar {
@@ -429,6 +422,73 @@ private fun statusLine(ui: MyioUiState): String = when (ui.status) {
     ConnectionStatus.Connecting -> "Kapcsolódás…"
     ConnectionStatus.Connected -> ui.info?.let { "${it.serial} · v${it.version}" } ?: "Kapcsolódva"
     ConnectionStatus.Error -> "Hiba: ${ui.error ?: "ismeretlen"}"
+}
+
+// Aggregate bottom nav: with few zones all fit; beyond [MAX_INLINE_ZONES] the bar would cram the labels
+// unreadably small, so we show only the [ZONE_CHUNK]-sized window containing the current selection and
+// page through the rest with ‹/› items. The active zone's name is still shown above the tiles.
+private const val MAX_INLINE_ZONES = 4
+private const val ZONE_CHUNK = 3
+
+/**
+ * The "Otthon (összes)" bottom nav: a fixed "Összes" summary item plus the global zones. Many zones are
+ * windowed (see above) so labels stay legible. [onSelectPage] takes a pager page index (0 = summary,
+ * i+1 = zones[i]).
+ */
+@Composable
+private fun AggregateBottomBar(
+    zones: List<Zone>,
+    pagerState: PagerState,
+    onSelectPage: (Int) -> Unit,
+) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = pagerState.currentPage == 0,
+            onClick = { onSelectPage(0) },
+            icon = { Icon(Icons.Filled.Home, contentDescription = "Összes") },
+            label = { Text("Összes") },
+        )
+        if (zones.size <= MAX_INLINE_ZONES) {
+            zones.forEachIndexed { i, zone ->
+                ZoneNavItem(zone, selected = pagerState.currentPage == i + 1, onClick = { onSelectPage(i + 1) })
+            }
+        } else {
+            // Window = the chunk of zones holding the current selection; ‹/› jump a chunk at a time.
+            val selectedZone = (pagerState.currentPage - 1).coerceAtLeast(0)
+            val start = (selectedZone / ZONE_CHUNK) * ZONE_CHUNK
+            val end = minOf(start + ZONE_CHUNK, zones.size)
+            if (start > 0) {
+                NavigationBarItem(
+                    selected = false,
+                    onClick = { onSelectPage(start - ZONE_CHUNK + 1) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Előző zónák") },
+                    label = { Text("…") },
+                )
+            }
+            for (i in start until end) {
+                ZoneNavItem(zones[i], selected = pagerState.currentPage == i + 1, onClick = { onSelectPage(i + 1) })
+            }
+            if (end < zones.size) {
+                NavigationBarItem(
+                    selected = false,
+                    onClick = { onSelectPage(end + 1) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "További zónák") },
+                    label = { Text("…") },
+                )
+            }
+        }
+    }
+}
+
+/** A single zone destination in the aggregate bottom nav. */
+@Composable
+private fun RowScope.ZoneNavItem(zone: Zone, selected: Boolean, onClick: () -> Unit) {
+    NavigationBarItem(
+        selected = selected,
+        onClick = onClick,
+        icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
+        label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+    )
 }
 
 /** A thin tonal hint bar shown above the tabs while visibility mode is on (MD mode feedback). */
