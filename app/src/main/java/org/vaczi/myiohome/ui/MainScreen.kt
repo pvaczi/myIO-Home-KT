@@ -188,8 +188,11 @@ fun MainScreen(
     val controlsEnabled = ui.status == ConnectionStatus.Connected
     val currentTab = Tab.entries.getOrNull(selectedTab)?.takeIf { it in visibleTabs } ?: visibleTabs.firstOrNull()
     val selectedIndex = visibleTabs.indexOf(currentTab).coerceAtLeast(0)
-    // Reorder mode only exists on HOME; leave it when the user swipes/taps to another tab.
-    LaunchedEffect(currentTab) { if (currentTab != Tab.HOME && reorderMode) editMode = EditMode.NONE }
+    // Reorder mode only exists on HOME (per-server); leave it when the user swipes/taps to another tab.
+    // In aggregate mode reorder lives on the "Összes" summary page instead, so this guard skips it.
+    LaunchedEffect(currentTab, isAggregate) {
+        if (!isAggregate && currentTab != Tab.HOME && reorderMode) editMode = EditMode.NONE
+    }
 
     // Swipe between tabs, kept in sync with the bottom nav and the persisted selection.
     val tabsState = rememberUpdatedState(visibleTabs)
@@ -211,6 +214,13 @@ fun MainScreen(
     // stay in sync (not persisted — the aggregate is a single virtual view). [scope] drives tab taps.
     val scope = rememberCoroutineScope()
     val aggregatePagerState = rememberPagerState(pageCount = { globalZones.size + 1 })
+    // Aggregate zone-reorder happens on the "Összes" summary page (page 0): jump there when it turns on
+    // so the up/down arrows on the zone headers are actually visible.
+    LaunchedEffect(reorderMode, isAggregate) {
+        if (isAggregate && reorderMode && aggregatePagerState.currentPage != 0) {
+            aggregatePagerState.animateScrollToPage(0)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -231,8 +241,14 @@ fun MainScreen(
                 actions = {
                     // Editing tools (reorder / assign / visibility) are expert-only — a non-expert locked
                     // view shows just the controls and the gear, so nothing can be rearranged by accident.
-                    // Reorder toggle: HOME tab only (zones + within-zone members get up/down arrows).
-                    if (expertMode && !isAggregate && currentServer != null && currentTab == Tab.HOME && zoneConfig.zones.isNotEmpty()) {
+                    // Reorder toggle: per-server HOME tab (zones + within-zone members get up/down arrows),
+                    // or the aggregate "Otthon (összes)" view (global zone order only — members are stored
+                    // per server and can't be interleaved across servers).
+                    val canReorderZones = expertMode && (
+                        (!isAggregate && currentServer != null && currentTab == Tab.HOME && zoneConfig.zones.isNotEmpty()) ||
+                            (isAggregate && globalZones.isNotEmpty())
+                        )
+                    if (canReorderZones) {
                         IconButton(onClick = {
                             editMode = if (reorderMode) EditMode.NONE else EditMode.REORDER
                         }) {
@@ -311,9 +327,11 @@ fun MainScreen(
                     hiddenByServer = aggregateHiddenByServer,
                     actionsFor = aggregateActionsFor,
                     pagerState = aggregatePagerState,
+                    reorderMode = reorderMode,
                     onAddZone = onAddZone,
                     onRenameZone = onRenameZone,
                     onDeleteZone = onDeleteZone,
+                    onMoveZone = onMoveZone,
                 )
 
                 currentServer == null ->
