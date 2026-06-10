@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -287,6 +288,26 @@ private fun DimmableLampTile(
                         Modifier.size(14.dp)
                             .background(MaterialTheme.colorScheme.primary, CircleShape),
                     )
+                },
+                // Thin line track (like the original app) instead of the bulky M3 default.
+                track = { sliderState ->
+                    val fraction = sliderState.value / 255f
+                    Box(
+                        Modifier.fillMaxWidth().height(3.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Box(
+                            Modifier.fillMaxSize()
+                                .background(
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    CircleShape,
+                                ),
+                        )
+                        Box(
+                            Modifier.fillMaxWidth(fraction).fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                        )
+                    }
                 },
                 modifier = Modifier.height(28.dp),
             )
