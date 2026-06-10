@@ -79,15 +79,24 @@ class MyioRepository(
     suspend fun sendCommand(body: String) = client.sendCommand(body)
 
     private fun cacheNames(s: ServerState) {
-        relayNames = s.relays.associate { it.id to it.name }
-        pcaNames = s.pcas.associate { it.id to it.name }
-        pwmNames = s.pwms.associate { it.id to it.name }
-        sensorNames = s.sensors.associate { it.id to it.name }
+        // Merge, don't clobber: keep previously cached names for ids whose fresh name is blank or
+        // missing. The PCA name-bug (id > 2100) returns blank names from d_sens_out — they're only
+        // filled from the flaky HTTP/0.9 /p_desc.xml. Without this merge, a single failed p_desc fetch
+        // (or an empty d_sens response) would wipe good names and the affected tiles vanish from the
+        // grid (name.isNotBlank() filter) until a later refresh happens to succeed.
+        relayNames = mergeNames(relayNames, s.relays.associate { it.id to it.name })
+        pcaNames = mergeNames(pcaNames, s.pcas.associate { it.id to it.name })
+        pwmNames = mergeNames(pwmNames, s.pwms.associate { it.id to it.name })
+        sensorNames = mergeNames(sensorNames, s.sensors.associate { it.id to it.name })
         pcaTurnOn = s.pcas.associate { it.id to it.turnOn }
         pcaTurnOff = s.pcas.associate { it.id to it.turnOff }
         pwmTurnOn = s.pwms.associate { it.id to it.turnOn }
         pwmTurnOff = s.pwms.associate { it.id to it.turnOff }
     }
+
+    /** Overlay [fresh] onto [old], but never replace an existing name with a blank/missing one. */
+    private fun mergeNames(old: Map<Int, String>, fresh: Map<Int, String>): Map<Int, String> =
+        old + fresh.filterValues { it.isNotBlank() }
 
     private fun applyNames(s: ServerState): ServerState = s.copy(
         relays = s.relays.map { it.copy(name = relayNames[it.id] ?: it.name) },
