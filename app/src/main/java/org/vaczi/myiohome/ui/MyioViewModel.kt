@@ -449,7 +449,7 @@ class MyioViewModel(
                 if (!refreshed) {
                     refreshed = true
                     runCatching { repo.getInfo() }.onSuccess { info -> emit { it.copy(info = info) } }
-                    runCatching { repo.refreshNames() } // fresh names land in the cache → next poll applies them
+                    runCatching { repo.refreshMetadata() } // fresh names + permissions land in the cache → next poll applies them
                     lastSnapshotMs = 0L // force the next poll to persist a snapshot with the fresh names
                 }
             } catch (e: CancellationException) {

@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -56,7 +58,8 @@ fun ControlledList(state: ServerState, actions: MyioActions, enabled: Boolean) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         items(items, key = { it.key }) { item ->
-            ControlledRow(item = item, enabled = enabled, onEdit = { editing = item })
+            // No write permission → the setpoint editor stays locked even when connected.
+            ControlledRow(item = item, enabled = enabled && item.writable, onEdit = { editing = item })
             HorizontalDivider()
         }
     }
@@ -96,8 +99,16 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                IconButton(onClick = onEdit, enabled = enabled) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Küszöbök szerkesztése")
+                if (!item.writable) {
+                    Icon(
+                        Icons.Filled.Lock,
+                        contentDescription = "Csak megtekintés (nincs vezérlési jog)",
+                        modifier = Modifier.size(20.dp),
+                    )
+                } else {
+                    IconButton(onClick = onEdit, enabled = enabled) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Küszöbök szerkesztése")
+                    }
                 }
             }
         },
@@ -164,6 +175,7 @@ private class ControlledItem(
     val sensor: Sensor,
     val onTenths: Int,
     val offTenths: Int,
+    val writable: Boolean,
     val apply: (onTenths: Int, offTenths: Int) -> Unit,
 ) {
     val unit: String get() = sensor.unit()
@@ -184,7 +196,7 @@ private fun ServerState.controlledItems(actions: MyioActions): List<ControlledIt
         val sensor = controllingSensor(r.sensorId) ?: return@forEach
         add(
             ControlledItem("r${r.id}", r.name.ifBlank { "Relé ${r.id}" }, if (r.on) "BE" else "KI",
-                sensor, r.sensorOnTenths, r.sensorOffTenths) { on, off -> actions.onSetRelayThermostat(r, on, off) },
+                sensor, r.sensorOnTenths, r.sensorOffTenths, r.writable) { on, off -> actions.onSetRelayThermostat(r, on, off) },
         )
     }
     pcas.forEach { p ->
@@ -192,14 +204,14 @@ private fun ServerState.controlledItems(actions: MyioActions): List<ControlledIt
         val v = if (p.isPwm) "${percent(p.state)}%" else if (p.on) "BE" else "KI"
         add(
             ControlledItem("p${p.id}", p.name.ifBlank { "PCA ${p.id}" }, v,
-                sensor, p.sensorOnTenths, p.sensorOffTenths) { on, off -> actions.onSetPcaThermostat(p, on, off) },
+                sensor, p.sensorOnTenths, p.sensorOffTenths, p.writable) { on, off -> actions.onSetPcaThermostat(p, on, off) },
         )
     }
     pwms.forEach { w ->
         val sensor = controllingSensor(w.sensorId) ?: return@forEach
         add(
             ControlledItem("w${w.id}", w.name.ifBlank { "Dimmer ${w.id}" }, "${percent(w.state)}%",
-                sensor, w.sensorOnTenths, w.sensorOffTenths) { on, off -> actions.onSetPwmThermostat(w, on, off) },
+                sensor, w.sensorOnTenths, w.sensorOffTenths, w.writable) { on, off -> actions.onSetPwmThermostat(w, on, off) },
         )
     }
 }

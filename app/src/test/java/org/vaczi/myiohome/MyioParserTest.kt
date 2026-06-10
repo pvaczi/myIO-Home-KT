@@ -3,16 +3,16 @@ package org.vaczi.myiohome
 import org.vaczi.myiohome.data.model.SensorKind
 import org.vaczi.myiohome.data.net.MyioParser
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Parser tests against real captured responses:
- *  - *-futes.json  : 192.168.1.11 (Fűtés, fw 3.7.5.1, 16 relay / 32 PCA)
- *  - p_desc-vilagitas.xml : 192.168.1.13 (Világítás, fw 3.9.1) — PCA names incl. id > 2100
+ * State-parser tests against a real captured response:
+ *  - *-futes.json : 192.168.1.11 (Fűtés, fw 3.7.5.1, 16 relay / 32 PCA)
+ *
+ * Names + permissions + on/off levels now come from the index page (`GET /`), covered separately in
+ * [MyioIndexParserTest]; `sens_out.json` here is the lightweight, name-less hot-path poll.
  */
 class MyioParserTest {
 
@@ -57,30 +57,5 @@ class MyioParserTest {
 
         // Energy meter id 200 reports imp=0 (no meter connected) → dropped, like the bridge does.
         assertNull(state.sensors.firstOrNull { it.id == 200 })
-    }
-
-    @Test
-    fun parsesStateWithNames() {
-        val state = MyioParser.parseState(fixture("d_sens_out-futes.json"))
-        val relay1 = state.relays.first { it.id == 1 }
-        assertEquals("Nappali levegő tilt", relay1.name)
-        assertNotNull(state.pcas.firstOrNull())
-        assertTrue(state.relays.size >= 16)
-
-        // Configured turn-on level (only present in d_sens_out): PWM 200, PCA 255 in this fixture.
-        assertEquals(200, state.pwms.first { it.id == 101 }.turnOn)
-        assertEquals(255, state.pcas.first { it.id == 2001 }.turnOn)
-    }
-
-    @Test
-    fun parsesPcaDescWorkaround() {
-        val names = MyioParser.parsePcaDesc(fixture("p_desc-vilagitas.xml"))
-        // <1>Háló szoba</1> → real PCA id 2001
-        assertEquals("Háló szoba", names[2001])
-        // id > 2100 names that d_sens_out.json leaves empty (the firmware bug this works around)
-        assertEquals("Konyha falfülke led", names[2101])
-        assertEquals("Iroda led", names[2117])
-        // blank entries are dropped
-        assertFalse(names.containsKey(2097))
     }
 }

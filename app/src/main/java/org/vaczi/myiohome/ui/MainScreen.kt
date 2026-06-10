@@ -353,7 +353,7 @@ fun MainScreen(
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
 
                 // Connected but no named tabs yet (fresh server, no cache): outputs exist but their
-                // names arrive only with refreshNames — show a loading hint, not "nothing here".
+                // names arrive only with refreshMetadata — show a loading hint, not "nothing here".
                 visibleTabs.isEmpty() && !ui.state.isEmpty() ->
                     Column(
                         Modifier.align(Alignment.Center),

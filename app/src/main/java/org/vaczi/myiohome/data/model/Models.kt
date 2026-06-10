@@ -13,7 +13,12 @@ import kotlinx.serialization.Serializable
  * (see StateCacheStore); only constructor properties are persisted, not the computed helpers.
  */
 
-/** Relay output (id 1..100). state is on/off. */
+/**
+ * Relay output (id 1..100). state is on/off.
+ * [writable] = the logged-in myIO user may switch it; false renders a locked, disabled tile. Non-readable
+ * outputs (no view permission) are dropped upstream (MyioRepository), so everything reaching the UI is at
+ * least readable. Defaults true → fail-open before the per-user permissions load (or on older firmware).
+ */
 @Serializable
 data class RelayOutput(
     val id: Int,
@@ -22,11 +27,12 @@ data class RelayOutput(
     val sensorId: Int = 0,
     val sensorOnTenths: Int = 0,   // ×10 → °C (e.g. 230 = 23.0 °C)
     val sensorOffTenths: Int = 0,
+    val writable: Boolean = true,
 )
 
 /**
  * PCA output (id 2001..2128). state 0..255; isPwm = brightness controllable.
- * [turnOn]/[turnOff] are the device-configured levels applied on PCA_ON / PCA_OFF (from d_sens_out).
+ * [turnOn]/[turnOff] are the device-configured levels applied on PCA_ON / PCA_OFF (from the index header).
  */
 @Serializable
 data class PcaOutput(
@@ -39,13 +45,14 @@ data class PcaOutput(
     val sensorOffTenths: Int = 0,
     val turnOn: Int = 255,
     val turnOff: Int = 0,
+    val writable: Boolean = true,
 ) {
     val on: Boolean get() = state != 0
 }
 
 /**
  * Legacy PWM (FET) output (id 101..113). state 0..255.
- * [turnOn]/[turnOff] are the device-configured levels applied on f_ON / f_OFF (from d_sens_out).
+ * [turnOn]/[turnOff] are the device-configured levels applied on f_ON / f_OFF (from the index header).
  */
 @Serializable
 data class PwmOutput(
@@ -57,6 +64,7 @@ data class PwmOutput(
     val sensorOffTenths: Int = 0,
     val turnOn: Int = 255,
     val turnOff: Int = 0,
+    val writable: Boolean = true,
 ) {
     val on: Boolean get() = state != 0
 }

@@ -81,20 +81,6 @@ object MyioParser {
         )
     }
 
-    /**
-     * Parses `/p_desc.xml` (`<N>name</N>` entries, N is 1-based → real PCA id = N + 2000).
-     * Recovers PCA names for id > 2100, which firmware returns empty in d_sens_out.json.
-     * Returns only non-blank names, keyed by real PCA id.
-     */
-    fun parsePcaDesc(body: String): Map<Int, String> =
-        Regex("<(\\d+)>([^<]*)</\\d+>").findAll(body)
-            .mapNotNull { m ->
-                val n = m.groupValues[1].toIntOrNull() ?: return@mapNotNull null
-                val name = m.groupValues[2].trim()
-                if (name.isEmpty()) null else (n + 2000) to name
-            }
-            .toMap()
-
     private fun SensorDto.toSensorOrNull(): Sensor? = when {
         temp != null -> Sensor(id, description.orEmpty(), SensorKind.TEMPERATURE, temp / 100.0)
         hum != null -> Sensor(id, description.orEmpty(), SensorKind.HUMIDITY, hum / 100.0)

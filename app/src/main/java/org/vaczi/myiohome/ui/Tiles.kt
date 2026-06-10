@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Visibility
@@ -133,22 +134,30 @@ private fun <T> List<T>.filterHidden(hideUi: HideUi, expertMode: Boolean, key: (
 // Live control tiles, shared by the type tabs and the Otthon (zone) dashboard so both render an
 // output identically. Each maps a domain output to its appropriate tile + control callback.
 
+// A tile is interactive only when both connected ([enabled]) and writable by the logged-in user. When the
+// user lacks write permission it renders [locked] (a padlock + greyed control) so the restriction is
+// visible rather than a command that silently bounces off the device.
+
 @Composable
 internal fun RelayControlTile(r: RelayOutput, actions: MyioActions, enabled: Boolean) =
-    LampTile(r.name, r.on, if (r.on) "BE" else "KI", Icons.Filled.Power, enabled) { actions.onToggleRelay(r) }
+    LampTile(r.name, r.on, if (r.on) "BE" else "KI", Icons.Filled.Power, enabled && r.writable, !r.writable) {
+        actions.onToggleRelay(r)
+    }
 
 @Composable
 internal fun PcaControlTile(p: PcaOutput, actions: MyioActions, enabled: Boolean) =
     if (p.isPwm) {
-        DimmableLampTile(p.name, p.state, Icons.Filled.Lightbulb, enabled,
+        DimmableLampTile(p.name, p.state, Icons.Filled.Lightbulb, enabled && p.writable, !p.writable,
             onToggle = { actions.onTogglePca(p) }, onSet = { actions.onSetPcaBrightness(p, it) })
     } else {
-        LampTile(p.name, p.on, if (p.on) "BE" else "KI", Icons.Filled.Lightbulb, enabled) { actions.onTogglePca(p) }
+        LampTile(p.name, p.on, if (p.on) "BE" else "KI", Icons.Filled.Lightbulb, enabled && p.writable, !p.writable) {
+            actions.onTogglePca(p)
+        }
     }
 
 @Composable
 internal fun PwmControlTile(d: PwmOutput, actions: MyioActions, enabled: Boolean) =
-    DimmableLampTile(d.name, d.state, Icons.Filled.Lightbulb, enabled,
+    DimmableLampTile(d.name, d.state, Icons.Filled.Lightbulb, enabled && d.writable, !d.writable,
         onToggle = { actions.onTogglePwm(d) }, onSet = { actions.onSetPwmBrightness(d, it) })
 
 /** A 2-column lazy grid with the app's standard padding/spacing, shared by every tile grid. */
@@ -193,7 +202,10 @@ private fun lampContainerColor(on: Boolean) =
 private fun lampContentColor(on: Boolean) =
     if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
 
-/** Compact tap-to-toggle lamp tile (grid cell), vividly coloured when on. Read-only until connected. */
+/**
+ * Compact tap-to-toggle lamp tile (grid cell), vividly coloured when on. Read-only until connected.
+ * [locked] = the user has no write permission → a padlock replaces the toggle affordance.
+ */
 @Composable
 private fun LampTile(
     name: String,
@@ -201,6 +213,7 @@ private fun LampTile(
     valueLabel: String,
     icon: ImageVector,
     enabled: Boolean,
+    locked: Boolean = false,
     onToggle: () -> Unit,
 ) {
     Surface(
@@ -214,6 +227,7 @@ private fun LampTile(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.weight(1f))
+                if (locked) LockBadge()
                 Text(valueLabel, style = MaterialTheme.typography.labelLarge)
             }
             Spacer(Modifier.height(4.dp))
@@ -239,6 +253,7 @@ private fun DimmableLampTile(
     state: Int,
     icon: ImageVector,
     enabled: Boolean,
+    locked: Boolean = false,
     onToggle: () -> Unit,
     onSet: (Int) -> Unit,
 ) {
@@ -260,6 +275,7 @@ private fun DimmableLampTile(
             ) {
                 Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.weight(1f))
+                if (locked) LockBadge()
                 Text("${percent(shownState)}%", style = MaterialTheme.typography.labelLarge)
             }
             Text(
@@ -413,6 +429,16 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
             )
         }
     }
+}
+
+/** Small padlock shown on a tile the logged-in user may see but not control (no write permission). */
+@Composable
+private fun LockBadge() {
+    Icon(
+        Icons.Filled.Lock,
+        contentDescription = "Csak megtekintés (nincs vezérlési jog)",
+        modifier = Modifier.size(16.dp).padding(end = 4.dp),
+    )
 }
 
 internal fun percent(state: Int): Int = (state / 255.0 * 100).roundToInt()

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<title>myIO-Hűtés-Fűtés vezérlő - index</title>
+<script>
+var x=0;
+var y=0;
+var version="3.7.5.1";
+var defaultLanguage=1;
+var year=2026;
+var month=6;
+var day=10;
+var hour=15;
+var minute=59;
+var _alarmActive=0;
+var message='Idő nincs szinkronizálva!';
+var relays=[101,100,101,101,101,0,100,0,100,100,100,0,0,0,0,0];
+var thermoActivator=[53,40,43,45,54,0,61,0,57,49,0,0,0,0,0,0];
+var min_temp_ON=[230,230,230,230,230,255,230,255,230,150,0,255,255,255,255,255];
+var max_temp_OFF=[240,240,240,240,240,255,240,255,240,180,0,255,255,255,255,255];
+var relay_description=new Array(17);
+relay_description [1]='Nappali levegő tilt';
+relay_description [2]='Iroda levegő tilt';
+relay_description [3]='Tusoló levegő tilt';
+relay_description [4]='Háló levegő tilt';
+relay_description [5]='Fürdőszoba levegő tilt';
+relay_description [7]='Lóri fürdő levegő tilt';
+relay_description [9]='Panka fürdő levegő tilt';
+relay_description [10]='Külső hőmérséklet tilt';
+relay_description [11]='Átrium talaj száraz';
+var PCA=[0,0,10255,11000,10000,10000,10000,10255,10255,10000,10000,10255,10000,10000,10000,10000,10000,10255,10255,10000,10255,10255,10000,10255,10000,0,0,0,0,0,0,0];
+var PCA_thermoActivator=[0,0,0,0,0,0,0,0,0,55,45,53,2,62,36,37,1,40,38,39,60,58,59,63,0,0,0,0,0,0,0,0];
+var PCA_min_temp_ON=[0,0,0,0,0,0,0,0,0,280,240,230,240,240,240,240,240,234,240,240,230,230,240,236,0,0,0,0,0,0,0,0];
+var PCA_max_temp_OFF=[0,0,0,0,0,0,0,0,0,200,230,220,230,230,230,230,230,228,230,230,220,220,235,230,200,0,0,0,0,0,0,0];
+var PCA_Mixer=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var PCA_PWM=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var PCAMIN=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var PCAMAX=[255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255];
+var PCA_description=new Array(33);
+PCA_description [2]='Tartalék relé 12A';
+PCA_description [5]='Átrium öntöző szelep';
+PCA_description [6]='Recirkulációs szivattyú';
+PCA_description [7]='Hőszivattyú indító /üres/';
+PCA_description [8]='Padló kör szivattyú';
+PCA_description [9]='Mennyezet kör szivattyú';
+PCA_description [10]='Tároló mennyezet szelep';
+PCA_description [11]='Háló mennyezet szelep';
+PCA_description [12]='Napp.étk.kony. mennyezet';
+PCA_description [13]='Napp.étk.kony. padló sz.';
+PCA_description [14]='Háló gard. padló szelep';
+PCA_description [15]='Fürdő padló szelep';
+PCA_description [16]='Iroda, folyosó padló sz.';
+PCA_description [17]='Tusoló padló szelep';
+PCA_description [18]='Iroda mennyezet szelep';
+PCA_description [19]='Lóri fürdő wc padló sz.';
+PCA_description [20]='Panka fürdő padló sz.';
+PCA_description [21]='Lóri szoba mennyezet sz.';
+PCA_description [22]='Panka szoba mennyezet sz.';
+PCA_description [23]='Vendég szoba mennyezet sz';
+PCA_description [24]='Társalgó mennyezet szelep';
+PCA_description [25]='Átrium szivattyú';
+PCA_description [3]='Átrium alsó lámpa';
+PCA_description [4]='Átrium fali 2es lámpa';
+var humidity=[0,0,0,0,0,0,0,0];
+var hum_description=new Array(8);
+var thermo_eepromIndex=[43,57,40,37,1,39,45,49,64,63,60,66,59,65,67,2,62,68,53,54,61,58,55,38,36];
+var thermo_temps=[2275,2443,2418,2262,2206,2375,2350,2756,4893,2412,2337,1887,2350,1818,1806,2300,2356,1956,2356,2362,2418,2387,2400,2393,2481];
+var thermo_description=new Array(0);
+thermo_description [51]='Szülői Háló';
+thermo_description [49]='Külső hő';
+thermo_description [37]='Iroda padló';
+thermo_description [40]='Iroda levegő';
+thermo_description [43]='Szauna mosdó levegő';
+thermo_description [1]='Szauna mosdó padló';
+thermo_description [36]='Szülői fürdő padló';
+thermo_description [54]='Szülői fürdő levegő';
+thermo_description [55]='Tároló levegő';
+thermo_description [53]='Nappali levegő';
+thermo_description [45]='Szülői háló levegő';
+thermo_description [57]='Panka fürdő levegő';
+thermo_description [39]='Panka fürdő padló';
+thermo_description [58]='Panka szoba levegő';
+thermo_description [59]='Vendég szoba levegő';
+thermo_description [60]='Lóri szoba levegő';
+thermo_description [61]='Lóri fürdő levegő';
+thermo_description [38]='Lóri fürdő padló';
+thermo_description [62]='Szülői háló padló';
+thermo_description [2]='Nappali padló';
+thermo_description [63]='Társalgó emelet levegő';
+thermo_description [64]='HMV tároló ';
+thermo_description [65]='Fűtési puffer (előre)';
+thermo_description [66]='Fűtési visszatérő ';
+thermo_description [67]='Talajszonda visszajövő';
+thermo_description [68]='Talajszonda lemenő';
+
+var impulsePerUnit =0;
+var consumptionUnit ="kW";
+var consumption =0;
+var fet=[0,0,0,0,0,0,0,0,0,0,0,0];
+var fetMIN=[0,0,0,0,0,0,0,0,0,0,0,0];
+var fetMAX=[0,0,0,0,0,0,0,0,0,0,0,0];
+var fetFadeSpeed=[0,0,0,0,0,0,0,0,0,0,0,0];
+var fet_description=new Array(13);
+
+var switchEnabled=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var switch_description=new Array(33);
+switch_description [1]='Hűtés tiltás harmatpont';
+switch_description [2]='Fűtés-Hűtés váltás';
+switch_description [3]='Átrium talajnedv. érz.';
+switch_description [4]='Átrium úszó kapcsoló ';
+switch_description [5]='Fő vízszelep';
+
+</script>
+<style>
+	body {
+		display: none;
+	}
+	</style>
+	<script>
+	var host="js/";
+	var Host="https://okoslak.hu/ext/";
+	var language=defaultLanguage;
+	var langJSON={};
+	var messageJSON={};
+	var str_language = new Array();
+	var style="style.css";
+	var source;
+	if(getCookie('Language')!=""){
+		language=getCookie('Language');
+	}
+	if (navigator.onLine && getCookie('Booster')=='1'){
+		if(getCookie('Host')!=""){
+			Host=getCookie('Host');
+			if(Host.slice(-1)!='/'){
+				Host+='/';
+				setCookie("Host",Host);
+			}
+		}	
+		if(getJSONfromURL(Host+'info.json')){
+			host=Host+'js/';
+			if(navigator.onLine && getCookie('Booster')=='1'){
+				if(version.startsWith("2.5")){host=host+'2.5/';}
+				if(version.startsWith("3")){host=host+'3.5/';style="styleBlue.css";}
+			}		
+			langJSON=getJSONfromURL(host+'lang/langinfo.json',langJSON);		
+			for(each in langJSON.languages){
+				str_language[each]=langJSON.languages[each].desc;
+			}
+			if(langJSON.languages[language]==undefined){
+				language=defaultLanguage;
+			}
+			if(message!=''){
+				console.log('message');
+				//messageJSON=getJSONfromURL(host+'lang/'+langJSON.languages[language].code+'.json',messageJSON);
+				messageJSON=getJSONfromURL(host+'lang/'+'HU.json',messageJSON);
+				for(each in messageJSON){
+					if(message == each){
+						message=messageJSON[each];
+					}
+				}			
+			}
+			document.write('<script src="'+host+'lang/'+langJSON.languages[language].code+'.js"/><\/script>');
+			document.write('<link rel="shortcut icon" type="image/x-icon" href="'+host+'favicon.ico"/>');
+			document.write('<script src="'+host+'func.js"/><\/script>');
+			document.write('<link rel="stylesheet" type="text/css" href="'+host+style+'"/>');
+			document.write('<script type="text/javascript" src="'+host+'nav.js"><\/script>');
+			if (window.location.pathname == "/chart") {
+				document.write('<script type="text/javascript" src="' + host + 'dygraph.js"><\/script>');
+			}
+			FindSource();
+			document.write('<script src="'+host+source+'.js"><\/script>');
+		}	
+	}	
+	
+	if(host=="js/"){
+		if(version.startsWith("3")){style="styleBlue.css";}
+		document.write('<link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">');
+		LoadScripts();			
+	}	
+	
+	function LoadScripts(){		
+		langJSON=getJSONfromURL(host+'lang/langinfo.json',langJSON);	
+		for(each in langJSON.languages){
+			str_language[each]=langJSON.languages[each].desc;
+		}
+		if(langJSON.languages[language]==undefined){
+			language=defaultLanguage;
+		}
+		langJSON.onload=LoadMessage();		
+	}
+	function LoadMessage(){
+		if(message!=''){
+			console.log('message');
+			messageJSON=getJSONfromURL(host+'lang/'+langJSON.languages[language].code+'.json',messageJSON);
+			for(each in messageJSON){
+				if(message == each){
+					message=messageJSON[each];
+				}
+			}
+			messageJSON.onload=LoadLang();
+		}else{
+			LoadLang();			
+		}
+	}
+	function LoadLang(){
+		document.write('<script src="'+host+'lang/'+langJSON.languages[language].code+'.js" onload="LoadFunc();"><\/script>');
+	}	
+	function LoadFunc(){
+		document.write('<script src="'+host+'func.js" onload="LoadDygraph();"><\/script>');
+	}	
+	function LoadDygraph(){
+		if (window.location.pathname == "/chart") {
+			document.write('<script src="'+host+'dygraph.js" onload="LoadNav();"><\/script>');
+		}else{
+			LoadNav();
+		}
+	}	
+	function LoadNav(){				
+		document.write('<script src="'+host+'nav.js" onload="LoadPage();"><\/script>');					
+	}
+	function LoadPage(){
+		FindSource();	
+		document.write('<script src="'+host+source+'.js" onload="LoadStyle();"><\/script>');
+	}
+	function LoadStyle(){
+		document.write('<link rel="stylesheet" type="text/css" href="'+host+style+'" onload="window.scrollTo(x,y);"/>');	
+	}
+	function FindSource(){
+		try{
+			if(window.location.pathname == "/" || 
+				window.location.pathname == "/index"){
+					source = "index";
+			}else if(window.location.pathname == "/chart"){
+					source = "chart";
+			}else if(_right == 2 && window.location.pathname == "/setup"){
+					source = "config";
+			}else{
+				source=window.location.pathname.substring(1);
+			}
+		}catch(err) {}
+	}
+	function getCookie(cname) {	
+		if( localStorage.getItem(cname)!=null){
+			return localStorage.getItem(cname);
+		}else if (cname=="AutoRefresh" || cname=="Booster") return 1;
+		return "";
+	}
+	function setCookie(cname, cvalue) {	
+		localStorage.setItem(cname,cvalue);
+	}
+	function getJSONfromURL(url,targetJSON) {
+		var request;
+		if(window.XMLHttpRequest){
+			request = new XMLHttpRequest();
+		}else{
+			request = new ActiveXObject("Microsoft.XMLHTTP");
+		}
+		if(targetJSON!=undefined){
+				request.onreadystatechange = function() {
+			if (this.readyState == 4 && this.status == 200) {
+				text=this.responseText;			
+				targetJSON = JSON.parse(text);		
+				}
+			};
+		}		
+		request.open('get', url, false);		
+		try{
+			request.send();
+		}catch(err) {
+			return false;
+		}	
+		if(targetJSON==undefined){
+			return true;
+		}else{
+			return targetJSON;
+		}	
+	}
+	</script>
