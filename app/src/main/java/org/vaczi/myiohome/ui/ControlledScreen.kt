@@ -181,9 +181,16 @@ private class ControlledItem(
     val unit: String get() = sensor.unit()
 }
 
-/** The controlling temperature/humidity sensor for an activator id, or null for non-thermostat ones. */
+/**
+ * The controlling temperature/humidity sensor for an activator id, or null for non-thermostat ones.
+ * `0` and `255` are the firmware's "no thermostat" sentinels (the official web theme guards both:
+ * `activator > 0 && activator < 255`). The sensor cross-reference below already excludes them
+ * implicitly (no real sensor has id 0 or 255), but we guard 255 explicitly as belt-and-suspenders
+ * against a firmware that might report it alongside a stray sensor entry.
+ */
 private fun ServerState.controllingSensor(sensorId: Int): Sensor? =
-    sensors.firstOrNull { it.id == sensorId && (it.kind == SensorKind.TEMPERATURE || it.kind == SensorKind.HUMIDITY) }
+    if (sensorId <= 0 || sensorId >= 255) null
+    else sensors.firstOrNull { it.id == sensorId && (it.kind == SensorKind.TEMPERATURE || it.kind == SensorKind.HUMIDITY) }
 
 /** True if any output is genuinely thermostat-controlled (drives whether the Termosztát tab shows). */
 internal fun ServerState.hasControlledOutputs(): Boolean =
