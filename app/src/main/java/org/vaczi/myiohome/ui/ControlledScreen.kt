@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -179,6 +180,9 @@ private fun ThermostatDialog(
                     Stepper("Hiszterézis (±)", hystT, unit) { dir ->
                         hystT = (hystT + dir).coerceIn(1, hMaxT)
                     }
+                } else {
+                    // Not editable for a plain user, but still worth seeing — show it read-only.
+                    ReadOnlyValue("Hiszterézis (±)", hystT, unit)
                 }
 
                 Text(
@@ -209,6 +213,19 @@ private fun Stepper(label: String, valueTenths: Int, unit: String, onStep: (Int)
             Text("%.1f %s".format(valueTenths / 10.0, unit), style = MaterialTheme.typography.headlineMedium)
         }
         RepeatIconButton(Icons.Filled.Add, "Növelés") { onStep(1) }
+    }
+}
+
+/** Read-only counterpart of [Stepper]: same centered label + value, dimmed, no −/+ buttons. */
+@Composable
+private fun ReadOnlyValue(label: String, valueTenths: Int, unit: String) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "%.1f %s".format(valueTenths / 10.0, unit),
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
