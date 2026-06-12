@@ -414,7 +414,7 @@ fun MainScreen(
                             Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Thermostat, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 SensorTile(it.name, formatSensor(it))
                             }
-                            Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled)
+                            Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled, expertMode)
                         }
                     }
                 }

@@ -18,7 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,7 +44,7 @@ import kotlin.math.roundToInt
  * the controlling sensor's kind. Heating mode = on-threshold below off-threshold; cooling is the reverse.
  */
 @Composable
-fun ControlledList(state: ServerState, actions: MyioActions, enabled: Boolean) {
+fun ControlledList(state: ServerState, actions: MyioActions, enabled: Boolean, expertMode: Boolean) {
     val items = remember(state) { state.controlledItems(actions) }
 
     if (items.isEmpty()) {
@@ -67,9 +67,10 @@ fun ControlledList(state: ServerState, actions: MyioActions, enabled: Boolean) {
     editing?.let { item ->
         ThermostatDialog(
             name = item.name,
-            unit = item.unit,
+            sensor = item.sensor,
             onTenths = item.onTenths,
             offTenths = item.offTenths,
+            expertMode = expertMode,
             onDismiss = { editing = null },
             onConfirm = { on, off -> item.apply(on, off); editing = null },
         )
@@ -116,52 +117,79 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
     )
 }
 
+/**
+ * Setpoint editor in the original app's mental model: the user drags a **target** slider (the desired
+ * temperature/humidity = the midpoint of the on/off band) and — only in expert mode — a **hysteresis**
+ * slider (the ±band). The heating/cooling **direction is preserved** from the existing config, so a
+ * plain user never has to set the thresholds "backwards". The current sensor reading is shown on top.
+ */
 @Composable
 private fun ThermostatDialog(
     name: String,
-    unit: String,
+    sensor: Sensor,
     onTenths: Int,
     offTenths: Int,
+    expertMode: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (onTenths: Int, offTenths: Int) -> Unit,
 ) {
-    var on by remember { mutableStateOf(tenthsToText(onTenths)) }
-    var off by remember { mutableStateOf(tenthsToText(offTenths)) }
-    val onValue = on.toValueOrNull()
-    val offValue = off.toValueOrNull()
-    val valid = onValue != null && offValue != null
+    val unit = sensor.unit()
+    val isHumidity = sensor.kind == SensorKind.HUMIDITY
+    // on <= off → heating (turn on below target, off above); preserved across the edit.
+    val heating = onTenths <= offTenths
+    val initialTarget = (onTenths + offTenths) / 20f
+    val initialHyst = (abs(offTenths - onTenths) / 20f).coerceAtLeast(0.1f)
+
+    var target by remember { mutableStateOf(initialTarget) }
+    var hyst by remember { mutableStateOf(initialHyst) }
+
+    // Slider bounds follow the unit (web-theme defaults), expanded if the current values fall outside.
+    val tMin = if (isHumidity) 0f else minOf(5f, initialTarget - 1f)
+    val tMax = if (isHumidity) 100f else maxOf(40f, initialTarget + 1f)
+    val hMax = if (isHumidity) 30f else maxOf(10f, initialHyst + 0.5f)
+
+    val onU = if (heating) target - hyst else target + hyst
+    val offU = if (heating) target + hyst else target - hyst
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(name) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = on,
-                    onValueChange = { on = it.filterDecimal() },
-                    label = { Text("Bekapcsolás ($unit)") },
-                    singleLine = true,
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Jelenleg: ${formatSensor(sensor)}", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Üzemmód: ${if (heating) "fűtés" else "hűtés"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedTextField(
-                    value = off,
-                    onValueChange = { off = it.filterDecimal() },
-                    label = { Text("Kikapcsolás ($unit)") },
-                    singleLine = true,
+
+                Text("Kívánt érték: %.1f %s".format(target, unit))
+                Slider(
+                    value = target,
+                    onValueChange = { target = (it * 10).roundToInt() / 10f },
+                    valueRange = tMin..tMax,
                 )
-                if (onValue != null && offValue != null) {
-                    Text(
-                        text = modeLabel((onValue * 10).roundToInt(), (offValue * 10).roundToInt()),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                if (expertMode) {
+                    Text("Hiszterézis: ±%.1f %s".format(hyst, unit))
+                    Slider(
+                        value = hyst,
+                        onValueChange = { hyst = (it * 10).roundToInt() / 10f },
+                        valueRange = 0.1f..hMax,
                     )
                 }
+
+                Text(
+                    "Bekapcsol %.1f, kikapcsol %.1f %s".format(onU, offU, unit),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = valid,
-                onClick = { onConfirm((onValue!! * 10).roundToInt(), (offValue!! * 10).roundToInt()) },
-            ) { Text("Mentés") }
+            TextButton(onClick = {
+                onConfirm((onU * 10).roundToInt(), (offU * 10).roundToInt())
+            }) { Text("Mentés") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Mégse") } },
     )
@@ -227,22 +255,12 @@ private fun Sensor.unit(): String = if (kind == SensorKind.HUMIDITY) "%" else "�
 
 private fun thresholdSummary(onTenths: Int, offTenths: Int, unit: String): String {
     val target = (onTenths + offTenths) / 20.0
-    val hysteresis = abs(offTenths - onTenths) / 10.0
-    return "BE %.1f → KI %.1f %s · cél %.1f · hiszt. %.1f (%s)".format(
-        onTenths / 10.0, offTenths / 10.0, unit, target, hysteresis, modeWord(onTenths, offTenths),
-    )
+    val hysteresis = abs(offTenths - onTenths) / 20.0
+    return "Cél %.1f %s · ±%.1f · %s".format(target, unit, hysteresis, modeWord(onTenths, offTenths))
 }
-
-private fun modeLabel(onTenths: Int, offTenths: Int): String = "Üzemmód: ${modeWord(onTenths, offTenths)}"
 
 private fun modeWord(onTenths: Int, offTenths: Int): String = when {
     onTenths < offTenths -> "fűtés"
     offTenths < onTenths -> "hűtés"
     else -> "—"
 }
-
-private fun tenthsToText(tenths: Int): String = "%.1f".format(tenths / 10.0)
-
-private fun String.toValueOrNull(): Double? = replace(',', '.').toDoubleOrNull()
-
-private fun String.filterDecimal(): String = replace(',', '.').filter { it.isDigit() || it == '.' }
