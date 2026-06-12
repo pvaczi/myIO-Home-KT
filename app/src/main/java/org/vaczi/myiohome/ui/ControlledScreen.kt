@@ -1,6 +1,8 @@
 package org.vaczi.myiohome.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,25 +12,30 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import org.vaczi.myiohome.data.model.Sensor
 import org.vaczi.myiohome.data.model.SensorKind
 import org.vaczi.myiohome.data.model.ServerState
@@ -118,10 +125,12 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
 }
 
 /**
- * Setpoint editor in the original app's mental model: the user drags a **target** slider (the desired
+ * Setpoint editor in the original app's mental model: the user adjusts a **target** (desired
  * temperature/humidity = the midpoint of the on/off band) and — only in expert mode — a **hysteresis**
- * slider (the ±band). The heating/cooling **direction is preserved** from the existing config, so a
- * plain user never has to set the thresholds "backwards". The current sensor reading is shown on top.
+ * (±band) with precise −/+ steppers (0.1 per tap, hold to repeat), like the factory app's NumberPickers.
+ * The heating/cooling **direction is preserved** from the existing config, so a plain user never has to
+ * set the thresholds "backwards". The current sensor reading is shown on top. Values are kept in tenths
+ * (integer) throughout, so there is no float drift on round-trip.
  */
 @Composable
 private fun ThermostatDialog(
@@ -137,25 +146,25 @@ private fun ThermostatDialog(
     val isHumidity = sensor.kind == SensorKind.HUMIDITY
     // on <= off → heating (turn on below target, off above); preserved across the edit.
     val heating = onTenths <= offTenths
-    val initialTarget = (onTenths + offTenths) / 20f
-    val initialHyst = (abs(offTenths - onTenths) / 20f).coerceAtLeast(0.1f)
+    val initialTargetT = ((onTenths + offTenths) / 2.0).roundToInt()
+    val initialHystT = (abs(offTenths - onTenths) / 2.0).roundToInt().coerceAtLeast(1)
 
-    var target by remember { mutableStateOf(initialTarget) }
-    var hyst by remember { mutableStateOf(initialHyst) }
+    var targetT by remember { mutableStateOf(initialTargetT) }
+    var hystT by remember { mutableStateOf(initialHystT) }
 
-    // Slider bounds follow the unit (web-theme defaults), expanded if the current values fall outside.
-    val tMin = if (isHumidity) 0f else minOf(5f, initialTarget - 1f)
-    val tMax = if (isHumidity) 100f else maxOf(40f, initialTarget + 1f)
-    val hMax = if (isHumidity) 30f else maxOf(10f, initialHyst + 0.5f)
+    // Step bounds in tenths follow the unit (web-theme defaults), expanded if current values fall outside.
+    val tMinT = if (isHumidity) 0 else minOf(50, initialTargetT - 10)
+    val tMaxT = if (isHumidity) 1000 else maxOf(400, initialTargetT + 10)
+    val hMaxT = if (isHumidity) 300 else maxOf(100, initialHystT + 5)
 
-    val onU = if (heating) target - hyst else target + hyst
-    val offU = if (heating) target + hyst else target - hyst
+    val onT = if (heating) targetT - hystT else targetT + hystT
+    val offT = if (heating) targetT + hystT else targetT - hystT
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(name) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Jelenleg: ${formatSensor(sensor)}", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Üzemmód: ${if (heating) "fűtés" else "hűtés"}",
@@ -163,36 +172,64 @@ private fun ThermostatDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                Text("Kívánt érték: %.1f %s".format(target, unit))
-                Slider(
-                    value = target,
-                    onValueChange = { target = (it * 10).roundToInt() / 10f },
-                    valueRange = tMin..tMax,
-                )
-
+                Stepper("Kívánt érték", targetT, unit) { dir ->
+                    targetT = (targetT + dir).coerceIn(tMinT, tMaxT)
+                }
                 if (expertMode) {
-                    Text("Hiszterézis: ±%.1f %s".format(hyst, unit))
-                    Slider(
-                        value = hyst,
-                        onValueChange = { hyst = (it * 10).roundToInt() / 10f },
-                        valueRange = 0.1f..hMax,
-                    )
+                    Stepper("Hiszterézis (±)", hystT, unit) { dir ->
+                        hystT = (hystT + dir).coerceIn(1, hMaxT)
+                    }
                 }
 
                 Text(
-                    "Bekapcsol %.1f, kikapcsol %.1f %s".format(onU, offU, unit),
+                    "Bekapcsol %.1f, kikapcsol %.1f %s".format(onT / 10.0, offT / 10.0, unit),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                onConfirm((onU * 10).roundToInt(), (offU * 10).roundToInt())
-            }) { Text("Mentés") }
+            TextButton(onClick = { onConfirm(onT, offT) }) { Text("Mentés") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Mégse") } },
     )
+}
+
+/**
+ * Precise value editor: large readout flanked by −/+ buttons. One tap = ±0.1; press-and-hold repeats
+ * (accelerating after a short delay) so large jumps are still quick — the feel of the factory app's wheel.
+ * [valueTenths] is in tenths of the unit; [onStep] receives the direction (−1 / +1) for one 0.1 step.
+ */
+@Composable
+private fun Stepper(label: String, valueTenths: Int, unit: String, onStep: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RepeatIconButton(Icons.Filled.Remove, "Csökkentés") { onStep(-1) }
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("%.1f %s".format(valueTenths / 10.0, unit), style = MaterialTheme.typography.headlineMedium)
+        }
+        RepeatIconButton(Icons.Filled.Add, "Növelés") { onStep(1) }
+    }
+}
+
+/** Icon button that fires once on tap and repeats while held (350 ms initial delay, then every 60 ms). */
+@Composable
+private fun RepeatIconButton(icon: ImageVector, contentDescription: String, onStep: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed = interaction.collectIsPressedAsState()
+    LaunchedEffect(pressed.value) {
+        if (pressed.value) {
+            onStep()
+            delay(350)
+            while (pressed.value) {
+                onStep()
+                delay(60)
+            }
+        }
+    }
+    FilledTonalIconButton(onClick = {}, interactionSource = interaction) {
+        Icon(icon, contentDescription = contentDescription)
+    }
 }
 
 /** UI descriptor for one controlled output, carrying its controlling sensor and setpoint command. */
