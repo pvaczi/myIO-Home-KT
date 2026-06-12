@@ -19,12 +19,34 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        // Release upload-kulcs (Play App Signing). Aktív, ha a VACZI_* property-k ki vannak töltve
+        // (a fejlesztő gépén ~/.gradle/gradle.properties → Dev/keys/gradle.properties symlinken át)
+        // ÉS a keystore-fájl létezik. Más gépen / üres jelszónál a release a debug-kulcsra esik
+        // vissza (lentebb), hogy a lokális :app:assembleRelease sose törjön el.
+        create("release") {
+            val storeFilePath = (project.findProperty("VACZI_STORE_FILE") as String?).orEmpty()
+            if (storeFilePath.isNotEmpty() && file(storeFilePath).exists()) {
+                storeFile = file(storeFilePath)
+                storePassword = (project.findProperty("VACZI_STORE_PASSWORD") as String?).orEmpty()
+                keyAlias = (project.findProperty("VACZI_KEY_ALIAS") as String?).orEmpty()
+                keyPassword = (project.findProperty("VACZI_KEY_PASSWORD") as String?).orEmpty()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
-            // Személyes sideload (Google Drive) → a gépi debug-kulccsal írjuk alá,
-            // hogy a release APK kulcskezelés nélkül telepíthető legyen.
-            signingConfig = signingConfigs.getByName("debug")
+            // Ha a release upload-kulcs konfigurálva van (keystore létezik + jelszó kitöltve),
+            // azzal írunk alá (Play); különben fallback a gépi debug-kulcsra (sideload, CI).
+            val vacziStore = (project.findProperty("VACZI_STORE_FILE") as String?).orEmpty()
+            val vacziPass = (project.findProperty("VACZI_STORE_PASSWORD") as String?).orEmpty()
+            signingConfig = if (vacziStore.isNotEmpty() && vacziPass.isNotEmpty() && file(vacziStore).exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
