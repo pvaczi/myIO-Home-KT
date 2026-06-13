@@ -17,6 +17,16 @@ data class StateRootDto(
     @SerialName("PCA") val pca: Map<String, PcaDto> = emptyMap(),
     @SerialName("PWM") val pwm: Map<String, PwmDto> = emptyMap(),
     val sensors: Map<String, SensorDto> = emptyMap(),
+    // Mutually-exclusive output pairs (R_PROT.XML). Used to detect shutters/covers: a pair where both
+    // elements are the same output type (both PCA or both relay) is a cover's up/down motor pair.
+    val protection: Map<String, ProtectionDto> = emptyMap(),
+)
+
+/** One protection (inhibit) pair from `sens_out.json`. `sens_out` omits the `element0d/1d` names. */
+@Serializable
+data class ProtectionDto(
+    val element0: Int = 0,
+    val element1: Int = 0,
 )
 
 @Serializable

@@ -1,6 +1,7 @@
 package org.vaczi.myiohome.data.net
 
 import org.vaczi.myiohome.data.model.PcaOutput
+import org.vaczi.myiohome.data.model.ProtectionPair
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.Sensor
@@ -67,6 +68,13 @@ object MyioParser {
             sensors = root.sensors.values
                 .sortedBy { it.id }
                 .mapNotNull { it.toSensorOrNull() },
+            protectionPairs = root.protection
+                .mapNotNull { (key, p) ->
+                    // Skip empty slots (element 0). The map key is the protection index.
+                    if (p.element0 == 0 || p.element1 == 0) null
+                    else ProtectionPair(key.toIntOrNull() ?: 0, p.element0, p.element1)
+                }
+                .sortedBy { it.index },
         )
     }
 

@@ -9,7 +9,8 @@ import org.junit.Test
 
 /**
  * State-parser tests against a real captured response:
- *  - *-futes.json : 192.168.1.11 (Fűtés, fw 3.7.5.1, 16 relay / 32 PCA)
+ *  - *-futes.json  : 192.168.1.11 (Fűtés, fw 3.7.5.1, 16 relay / 32 PCA)
+ *  - *-redony.json : 192.168.1.12 (Redőny, 64 relay / 128 PCA, 36 protection pairs)
  *
  * Names + permissions + on/off levels now come from the index page (`GET /`), covered separately in
  * [MyioIndexParserTest]; `sens_out.json` here is the lightweight, name-less hot-path poll.
@@ -57,5 +58,22 @@ class MyioParserTest {
 
         // Energy meter id 200 reports imp=0 (no meter connected) → dropped, like the bridge does.
         assertNull(state.sensors.firstOrNull { it.id == 200 })
+    }
+
+    @Test
+    fun parsesProtectionPairs() {
+        val state = MyioParser.parseState(fixture("sens_out-redony.json"))
+        // The real device exposes 37 protection entries; one is a duplicate (2051/2052) but the parser
+        // keeps every non-empty slot (dedup happens in CoverDetection). Empty slots (element 0) dropped.
+        assertTrue(state.protectionPairs.isNotEmpty())
+        assertTrue(state.protectionPairs.none { it.element0 == 0 || it.element1 == 0 })
+
+        // First pair on this device: 2001 (Le) / 2002 (Fel).
+        val first = state.protectionPairs.first()
+        assertEquals(2001, first.element0)
+        assertEquals(2002, first.element1)
+
+        // All pairs on this device are PCA-PCA (id ≥ 2001).
+        assertTrue(state.protectionPairs.all { it.element0 >= 2001 && it.element1 >= 2001 })
     }
 }

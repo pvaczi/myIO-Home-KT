@@ -90,6 +90,14 @@ data class ServerInfo(
     val api: Int,
 )
 
+/**
+ * Mutually-exclusive output pair (myIO `R_PROT.XML` / `sens_out` `protection` section). Typically a
+ * shutter motor: [element0] and [element1] are the two directions that must never run together.
+ * Cover detection consumes these (see CoverDetection).
+ */
+@Serializable
+data class ProtectionPair(val index: Int, val element0: Int, val element1: Int)
+
 /** Complete polled state of one myIO server. */
 @Serializable
 data class ServerState(
@@ -97,4 +105,5 @@ data class ServerState(
     val pcas: List<PcaOutput> = emptyList(),
     val pwms: List<PwmOutput> = emptyList(),
     val sensors: List<Sensor> = emptyList(),
+    val protectionPairs: List<ProtectionPair> = emptyList(),
 )
