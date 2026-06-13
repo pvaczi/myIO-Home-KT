@@ -36,6 +36,29 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun exportSubstitutesShareCredentialsAndDropsThem() {
+        val servers = listOf(
+            // Has a share account → exported copy logs in as it; share-cred fields are stripped.
+            MyioServer(name = "Fűtés", host = "10.0.0.1", user = "admin", password = "admin", shareUser = "family", sharePassword = "example123"),
+            // No share account → own credentials shared unchanged.
+            MyioServer(name = "Világítás", host = "10.0.0.2", user = "admin", password = "admin"),
+        )
+
+        val decoded = SettingsBackup.decode(SettingsBackup.encode(AppTheme.GREEN, servers, emptyList(), emptyMap()))!!
+
+        val futes = decoded.servers[0]
+        assertEquals("family", futes.user)
+        assertEquals("example123", futes.password)
+        assertNull(futes.shareUser)
+        assertNull(futes.sharePassword)
+
+        val vilagitas = decoded.servers[1]
+        assertEquals("admin", vilagitas.user)
+        assertEquals("admin", vilagitas.password)
+        assertNull(vilagitas.shareUser)
+    }
+
+    @Test
     fun rejectsArbitraryJson() {
         // Valid JSON object but not ours (no magic) → null, even though every field has a default.
         assertNull(SettingsBackup.decode("""{"hello":"world"}"""))

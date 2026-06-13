@@ -111,7 +111,8 @@ fun ServerSettingsScreen(
                     supportingContent = {
                         Text(
                             "${server.host}:${server.port}" +
-                                if (server.hidden) " · rejtett (nem-szakértő nézetben)" else "",
+                                (if (server.hidden) " · rejtett (nem-szakértő nézetben)" else "") +
+                                (server.shareUser?.takeIf { it.isNotBlank() }?.let { " · megoszt: $it" } ?: ""),
                         )
                     },
                     leadingContent = { Icon(Icons.Filled.Dns, contentDescription = null) },
@@ -293,6 +294,8 @@ private fun ServerEditDialog(
     var password by remember { mutableStateOf(initial?.password ?: "admin") }
     var pollSec by remember { mutableStateOf(initial?.pollIntervalSec ?: SettingsStore.DEFAULT_POLL_SEC) }
     var hidden by remember { mutableStateOf(initial?.hidden ?: false) }
+    var shareUser by remember { mutableStateOf(initial?.shareUser ?: "") }
+    var sharePassword by remember { mutableStateOf(initial?.sharePassword ?: "") }
     var prefixMenuOpen by remember { mutableStateOf(false) }
     val valid = name.isNotBlank() && host.isNotBlank() && port.toIntOrNull() != null
 
@@ -369,6 +372,17 @@ private fun ServerEditDialog(
                         }
                         Switch(checked = hidden, onCheckedChange = { hidden = it })
                     }
+                    HorizontalDivider()
+                    Text("Megosztási hitelesítés (opcionális)", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "Beállítások exportjakor a megosztott másolat EZT a fiókot kapja a saját belépésed " +
+                            "helyett (pl. „family”). Így nem kell minden megosztás előtt admin↔family-re " +
+                            "kapcsolgatnod. Üresen hagyva a saját felhasználó/jelszó megy.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(shareUser, { shareUser = it }, label = { Text("Megosztási felhasználó") }, singleLine = true)
+                    OutlinedTextField(sharePassword, { sharePassword = it }, label = { Text("Megosztási jelszó") }, singleLine = true)
                 }
             }
         },
@@ -377,6 +391,8 @@ private fun ServerEditDialog(
                 onClick = {
                     // Editing keeps the original slot's id; adding gets a fresh one via the default.
                     val base = initial ?: MyioServer(name = "", host = "")
+                    // Blank share-user → no override; drop the password too so it can't linger orphaned.
+                    val su = shareUser.trim().ifBlank { null }
                     onConfirm(
                         base.copy(
                             name = name.trim(),
@@ -386,6 +402,8 @@ private fun ServerEditDialog(
                             password = password,
                             pollIntervalSec = pollSec,
                             hidden = hidden,
+                            shareUser = su,
+                            sharePassword = if (su == null) null else sharePassword.ifBlank { null },
                         ),
                     )
                 },

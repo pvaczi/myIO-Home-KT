@@ -44,7 +44,9 @@ data class SettingsBackup(
             assignments: Map<String, ZoneAssignments>,
         ): String = json.encodeToString(
             serializer(),
-            SettingsBackup(theme = theme, servers = servers, zones = zones, assignments = assignments),
+            // forSharing() swaps in each slot's optional share credentials (e.g. family) so the exporter
+            // never has to change their own admin login to share a restricted copy.
+            SettingsBackup(theme = theme, servers = servers.map { it.forSharing() }, zones = zones, assignments = assignments),
         )
 
         /**

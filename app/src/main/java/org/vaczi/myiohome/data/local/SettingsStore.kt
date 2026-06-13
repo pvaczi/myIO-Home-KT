@@ -50,9 +50,26 @@ data class MyioServer(
      * including the home/aggregate dashboards. No effect in expert mode. (Default empty → unchanged.)
      */
     val hiddenOutputs: List<String> = emptyList(),
+    /**
+     * Optional credentials substituted into this slot **only when the config is exported** for sharing
+     * (see [SettingsBackup.encode] / [forSharing]). Lets you stay logged in as admin yourself while the
+     * shared copy carries a restricted (e.g. family) account — no swapping your own login before every
+     * export. Null/blank → the slot's own [user]/[password] are shared unchanged.
+     */
+    val shareUser: String? = null,
+    val sharePassword: String? = null,
     val id: String = newId(),
 ) {
     fun toConfig(): ServerConfig = ServerConfig(host = host, port = port, user = user, password = password)
+
+    /**
+     * The copy that goes into a shared backup: if [shareUser] is set, its credentials replace [user]/
+     * [password] so the recipient logs in restricted; the share-cred fields are always dropped from the
+     * exported slot (they're the exporter's secret — useless and leaky downstream).
+     */
+    fun forSharing(): MyioServer =
+        if (shareUser.isNullOrBlank()) copy(shareUser = null, sharePassword = null)
+        else copy(user = shareUser, password = sharePassword.orEmpty(), shareUser = null, sharePassword = null)
 
     companion object {
         fun newId(): String = java.util.UUID.randomUUID().toString()
