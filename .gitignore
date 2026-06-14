@@ -11,3 +11,6 @@ local.properties
 /app/build
 /.kotlin
 /.claude
+
+# Eseti hardver-dumpok (nem verziozott)
+_futes_dump/

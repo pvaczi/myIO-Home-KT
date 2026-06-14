@@ -1,5 +1,7 @@
 package org.vaczi.myiohome.data.net
 
+import org.vaczi.myiohome.data.model.CoverOutputType
+
 /**
  * Builds the myIO control command bodies POSTed to `/` (see `MyIO/AGENTS.md` "Vezérlő parancsok").
  *
@@ -44,4 +46,24 @@ object MyioCommands {
     /** PCA turn-on / turn-off temperature (from the legacy app: `PCA_temp_MIN*x` / `PCA_temp_MAX*x`). */
     fun pcaThermostatOn(id: Int, tenths: Int): String = "PCA_temp_MIN*${pcaIndex(id)}=$tenths"
     fun pcaThermostatOff(id: Int, tenths: Int): String = "PCA_temp_MAX*${pcaIndex(id)}=$tenths"
+
+    // --- Cover (shutter) motor control (mirrors the bridge): always turn the opposite direction OFF first,
+    // then the wanted direction ON, so the protection pair can't deadlock. Sent sequentially. -----------
+
+    private fun on(type: CoverOutputType, id: Int) =
+        if (type == CoverOutputType.PCA) pcaOnOff(id, true) else relay(id, true)
+    private fun off(type: CoverOutputType, id: Int) =
+        if (type == CoverOutputType.PCA) pcaOnOff(id, false) else relay(id, false)
+
+    /** OPEN/up: stop the down direction, drive up. */
+    fun coverOpen(type: CoverOutputType, upId: Int, downId: Int): List<String> =
+        listOf(off(type, downId), on(type, upId))
+
+    /** CLOSE/down: stop the up direction, drive down. */
+    fun coverClose(type: CoverOutputType, upId: Int, downId: Int): List<String> =
+        listOf(off(type, upId), on(type, downId))
+
+    /** STOP: both directions off. */
+    fun coverStop(type: CoverOutputType, upId: Int, downId: Int): List<String> =
+        listOf(off(type, upId), off(type, downId))
 }

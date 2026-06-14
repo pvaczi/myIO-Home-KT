@@ -18,6 +18,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
+import org.vaczi.myiohome.data.local.CoverStore
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.ZoneStore
 import org.vaczi.myiohome.ui.AppSettingsScreen
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
             SettingsStore(applicationContext),
             StateCacheStore(applicationContext),
             ZoneStore(applicationContext),
+            CoverStore(applicationContext),
         )
     }
 
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
                 val expertMode by viewModel.expertMode.collectAsStateWithLifecycle()
                 val zoneConfig by viewModel.zoneConfig.collectAsStateWithLifecycle()
                 val hideZoned by viewModel.hideZoned.collectAsStateWithLifecycle()
+                val covers by viewModel.covers.collectAsStateWithLifecycle()
                 // Aggregate ("Otthon (összes)") state: global zones + every polled server's live state.
                 val isAggregate by viewModel.isAggregate.collectAsStateWithLifecycle()
                 val aggregate by viewModel.aggregate.collectAsStateWithLifecycle()
@@ -113,6 +116,13 @@ class MainActivity : ComponentActivity() {
                             onDeleteZone = viewModel::deleteZone,
                             onMoveZone = viewModel::moveZone,
                             onReorderZoneMembers = viewModel::setZoneMemberOrder,
+                            covers = covers,
+                            onCoverOpen = viewModel::coverOpen,
+                            onCoverClose = viewModel::coverClose,
+                            onCoverStop = viewModel::coverStop,
+                            onCoverSwap = viewModel::swapCover,
+                            onCoverRename = viewModel::renameCover,
+                            onCoverDisable = { viewModel.setCoverDisabled(it, true) },
                             isAggregate = isAggregate,
                             aggregatePerServer = aggregate.perServer,
                             aggregateAssignments = allAssignments,

@@ -1,5 +1,6 @@
 package org.vaczi.myiohome
 
+import org.vaczi.myiohome.data.model.CoverOutputType
 import org.vaczi.myiohome.data.net.MyioCommands
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -46,5 +47,15 @@ class MyioCommandsTest {
         // PCA: PCA_temp_MIN*x / PCA_temp_MAX*x, x = id − 2000.
         assertEquals("PCA_temp_MIN*5=220", MyioCommands.pcaThermostatOn(2005, 220))
         assertEquals("PCA_temp_MAX*117=245", MyioCommands.pcaThermostatOff(2117, 245))
+    }
+
+    @Test
+    fun coverDrivesOppositeOffThenWantedOn() {
+        // PCA cover, up=2002 down=2001: OPEN stops down then drives up; CLOSE the reverse; STOP both off.
+        assertEquals(listOf("PCA_OFF=2001", "PCA_ON=2002"), MyioCommands.coverOpen(CoverOutputType.PCA, 2002, 2001))
+        assertEquals(listOf("PCA_OFF=2002", "PCA_ON=2001"), MyioCommands.coverClose(CoverOutputType.PCA, 2002, 2001))
+        assertEquals(listOf("PCA_OFF=2002", "PCA_OFF=2001"), MyioCommands.coverStop(CoverOutputType.PCA, 2002, 2001))
+        // Relay variant uses r_ON / r_OFF.
+        assertEquals(listOf("r_OFF=4", "r_ON=3"), MyioCommands.coverOpen(CoverOutputType.RELAY, 3, 4))
     }
 }

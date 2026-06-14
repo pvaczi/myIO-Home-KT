@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.vaczi.myiohome.data.local.AppTheme
+import org.vaczi.myiohome.data.local.CoverStore
 import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
@@ -34,6 +35,10 @@ import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.local.ZoneConfig
 import org.vaczi.myiohome.data.local.ZoneStore
+import org.vaczi.myiohome.data.model.Cover
+import org.vaczi.myiohome.data.model.CoverDetection
+import org.vaczi.myiohome.data.model.CoverOutputType
+import org.vaczi.myiohome.data.model.CoverOverride
 import org.vaczi.myiohome.data.model.PcaOutput
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
@@ -83,6 +88,7 @@ data class AggregateUiState(
 class MyioViewModel(
     private val settings: SettingsStore,
     private val zones: ZoneStore,
+    private val coverStore: CoverStore,
     private val repoFactory: (MyioServer) -> MyioRepository = { MyioRepository(it.toConfig()) },
 ) : ViewModel() {
 
@@ -156,6 +162,30 @@ class MyioViewModel(
     val zoneConfig: StateFlow<ZoneConfig> = combine(globalZones, selectedAssignments) { zs, a ->
         ZoneConfig(zones = zs, assignments = a.assignments, memberOrder = a.memberOrder)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ZoneConfig())
+
+    // --- Covers (shutters): detected from the selected server's protection pairs + per-server overrides ---
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val selectedCoverOverrides: StateFlow<Map<String, CoverOverride>> = settings.selected
+        .flatMapLatest { server -> if (server == null) flowOf(emptyMap()) else coverStore.overrides(server.id) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** The detected covers for the selected server (structural detection + user overrides), recomputed on each poll. */
+    val covers: StateFlow<List<Cover>> = combine(_ui, selectedCoverOverrides) { u, ov ->
+        CoverDetection.detect(u.state, ov)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Edit one cover's override on the current server (disable / swap orientation / rename). */
+    private fun editCover(coverKey: String, transform: (CoverOverride) -> CoverOverride) {
+        val server = currentServer.value ?: return
+        viewModelScope.launch { coverStore.edit(server.id, coverKey, transform) }
+    }
+
+    fun setCoverDisabled(c: Cover, disabled: Boolean) =
+        editCover(c.outputKey()) { it.copy(disabled = disabled) }
+    fun swapCover(c: Cover) = editCover(c.outputKey()) { it.copy(swapped = !it.swapped) }
+    fun renameCover(c: Cover, name: String) =
+        editCover(c.outputKey()) { it.copy(name = name.trim().ifBlank { null }) }
 
     /** Every server's assignment, keyed by server id — drives the aggregate view + relevant-server filter. */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -626,6 +656,38 @@ class MyioViewModel(
         send(MyioCommands.fetThermostatOn(pwm.id, onTenths), MyioCommands.fetThermostatOff(pwm.id, offTenths))
     }
 
+    // Cover (shutter) motor: drive up / down / stop. The optimistic step reflects the running direction so
+    // the indicator updates instantly; the next poll confirms (and a stopped motor self-heals on its tick).
+    private fun ServerState.driveCover(c: Cover, up: Boolean, down: Boolean): ServerState =
+        if (c.type == CoverOutputType.PCA) copy(pcas = pcas.map {
+            when (it.id) {
+                c.upId -> it.copy(state = if (up) it.turnOn else 0)
+                c.downId -> it.copy(state = if (down) it.turnOn else 0)
+                else -> it
+            }
+        }) else copy(relays = relays.map {
+            when (it.id) {
+                c.upId -> it.copy(on = up)
+                c.downId -> it.copy(on = down)
+                else -> it
+            }
+        })
+
+    private fun ControlTarget.coverOpen(c: Cover) {
+        optimistic { it.driveCover(c, up = true, down = false) }
+        send(*MyioCommands.coverOpen(c.type, c.upId, c.downId).toTypedArray())
+    }
+
+    private fun ControlTarget.coverClose(c: Cover) {
+        optimistic { it.driveCover(c, up = false, down = true) }
+        send(*MyioCommands.coverClose(c.type, c.upId, c.downId).toTypedArray())
+    }
+
+    private fun ControlTarget.coverStop(c: Cover) {
+        optimistic { it.driveCover(c, up = false, down = false) }
+        send(*MyioCommands.coverStop(c.type, c.upId, c.downId).toTypedArray())
+    }
+
     // Public single-server handlers (MainActivity wires these to the UI callbacks).
     fun toggleRelay(relay: RelayOutput) = singleTarget.relayToggle(relay)
     fun togglePca(pca: PcaOutput) = singleTarget.pcaToggle(pca)
@@ -635,6 +697,9 @@ class MyioViewModel(
     fun setRelayThermostat(relay: RelayOutput, onTenths: Int, offTenths: Int) = singleTarget.relayThermostat(relay, onTenths, offTenths)
     fun setPcaThermostat(pca: PcaOutput, onTenths: Int, offTenths: Int) = singleTarget.pcaThermostat(pca, onTenths, offTenths)
     fun setPwmThermostat(pwm: PwmOutput, onTenths: Int, offTenths: Int) = singleTarget.pwmThermostat(pwm, onTenths, offTenths)
+    fun coverOpen(cover: Cover) = singleTarget.coverOpen(cover)
+    fun coverClose(cover: Cover) = singleTarget.coverClose(cover)
+    fun coverStop(cover: Cover) = singleTarget.coverStop(cover)
 
     // Public aggregate handlers (route to the owning server's target, per-server optimistic + gen guard).
     fun aggToggleRelay(serverId: String, relay: RelayOutput) = aggregateTarget(serverId).relayToggle(relay)
@@ -644,11 +709,12 @@ class MyioViewModel(
     fun aggSetPwmBrightness(serverId: String, pwm: PwmOutput, value: Int) = aggregateTarget(serverId).pwmSet(pwm, value)
 
     companion object {
-        fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore) = viewModelFactory {
+        fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore) = viewModelFactory {
             initializer {
                 MyioViewModel(
                     settings = settings,
                     zones = zones,
+                    coverStore = covers,
                     repoFactory = { MyioRepository(it.toConfig(), stateCache, it.id) },
                 )
             }

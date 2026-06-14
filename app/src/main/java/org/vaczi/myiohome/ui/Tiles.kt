@@ -23,20 +23,34 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Blinds
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -50,6 +64,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.vaczi.myiohome.data.local.ZoneConfig
+import org.vaczi.myiohome.data.model.Cover
+import org.vaczi.myiohome.data.model.CoverState
 import org.vaczi.myiohome.data.model.PcaOutput
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
@@ -159,6 +175,116 @@ internal fun PcaControlTile(p: PcaOutput, actions: MyioActions, enabled: Boolean
 internal fun PwmControlTile(d: PwmOutput, actions: MyioActions, enabled: Boolean) =
     DimmableLampTile(d.name, d.state, Icons.Filled.Lightbulb, enabled && d.writable, !d.writable,
         onToggle = { actions.onTogglePwm(d) }, onSet = { actions.onSetPwmBrightness(d, it) })
+
+/** Callbacks for a cover tile. Editing callbacks are only invoked when [expert] and act via the ⋮ menu. */
+data class CoverActions(
+    val onOpen: (Cover) -> Unit = {},
+    val onClose: (Cover) -> Unit = {},
+    val onStop: (Cover) -> Unit = {},
+    val onSwap: (Cover) -> Unit = {},
+    val onRename: (Cover, String) -> Unit = { _, _ -> },
+    val onDisable: (Cover) -> Unit = {},
+)
+
+/**
+ * Roller-shutter tile: up / stop / down momentary buttons + a running-direction indicator. There is no
+ * real position feedback (the device's motor timer stops at the end stop), so no slider. [locked]
+ * (no write permission) greys the buttons and shows a padlock. In [expert] mode a ⋮ menu offers
+ * fel/le swap, rename and "not a shutter" (disable) — the user's corrections to auto-detection.
+ */
+@Composable
+internal fun CoverTile(cover: Cover, enabled: Boolean, expert: Boolean, actions: CoverActions) {
+    val active = cover.writable && enabled
+    val moving = cover.state != CoverState.STOPPED
+    var menuOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    Surface(
+        color = if (moving) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (moving) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Blinds, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    cover.name.ifBlank { "Redőny ${cover.upId}" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!cover.writable) LockBadge()
+                Text(coverStateLabel(cover.state), style = MaterialTheme.typography.labelMedium)
+                if (expert) {
+                    Box {
+                        IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Beállítások", modifier = Modifier.size(18.dp))
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Fel/le csere") },
+                                leadingIcon = { Icon(Icons.Filled.SwapVert, contentDescription = null) },
+                                onClick = { menuOpen = false; actions.onSwap(cover) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Átnevezés…") },
+                                onClick = { menuOpen = false; renaming = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Nem redőny") },
+                                onClick = { menuOpen = false; actions.onDisable(cover) },
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                CoverButton(Icons.Filled.KeyboardArrowUp, "Fel", active, cover.state == CoverState.OPENING, Modifier.weight(1f)) { actions.onOpen(cover) }
+                CoverButton(Icons.Filled.Stop, "Állj", active, false, Modifier.weight(1f)) { actions.onStop(cover) }
+                CoverButton(Icons.Filled.KeyboardArrowDown, "Le", active, cover.state == CoverState.CLOSING, Modifier.weight(1f)) { actions.onClose(cover) }
+            }
+        }
+    }
+    if (renaming) {
+        var text by remember { mutableStateOf(cover.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Redőny átnevezése") },
+            text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { renaming = false; actions.onRename(cover, text) }) { Text("Mentés") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Mégse") } },
+        )
+    }
+}
+
+@Composable
+private fun CoverButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    FilledIconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(40.dp),
+        colors = if (active) IconButtonDefaults.filledIconButtonColors()
+        else IconButtonDefaults.filledTonalIconButtonColors(),
+    ) {
+        Icon(icon, contentDescription = label)
+    }
+}
+
+private fun coverStateLabel(state: CoverState): String = when (state) {
+    CoverState.OPENING -> "Nyílik"
+    CoverState.CLOSING -> "Záródik"
+    CoverState.STOPPED -> "Áll"
+}
 
 /** A 2-column lazy grid with the app's standard padding/spacing, shared by every tile grid. */
 @Composable

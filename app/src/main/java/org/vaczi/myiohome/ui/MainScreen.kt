@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Blinds
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeviceThermostat
@@ -81,6 +82,7 @@ import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.local.ZoneConfig
+import org.vaczi.myiohome.data.model.Cover
 import org.vaczi.myiohome.data.model.PcaOutput
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
@@ -91,6 +93,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Otthon", Icons.Filled.Home),
     RELAYS("Relék", Icons.Filled.Power),
     PCA("PCA", Icons.Filled.Lightbulb),
+    COVERS("Redőny", Icons.Filled.Blinds),
     DIMMERS("Dimmerek", Icons.Filled.Tune),
     SENSORS("Szenzorok", Icons.Filled.Thermostat),
     CONTROLLED("Termosztát", Icons.Filled.DeviceThermostat),
@@ -138,6 +141,14 @@ fun MainScreen(
     onDeleteZone: (String) -> Unit = {},
     onMoveZone: (id: String, up: Boolean) -> Unit = { _, _ -> },
     onReorderZoneMembers: (zoneId: String, orderedKeys: List<String>) -> Unit = { _, _ -> },
+    // Covers (shutters): detected from protection pairs; their member outputs are hidden from the PCA/Relé tabs.
+    covers: List<Cover> = emptyList(),
+    onCoverOpen: (Cover) -> Unit = {},
+    onCoverClose: (Cover) -> Unit = {},
+    onCoverStop: (Cover) -> Unit = {},
+    onCoverSwap: (Cover) -> Unit = {},
+    onCoverRename: (Cover, String) -> Unit = { _, _ -> },
+    onCoverDisable: (Cover) -> Unit = {},
     // Aggregate ("Otthon (összes)") mode: render every polled server's zoned outputs in one dashboard.
     isAggregate: Boolean = false,
     aggregatePerServer: Map<String, MyioUiState> = emptyMap(),
@@ -184,8 +195,28 @@ fun MainScreen(
     // empty Dimmerek everywhere, etc. stay hidden — mirrors the factory app). [selectedTab] is the
     // persisted Tab *ordinal* (stable regardless of which tabs are visible), mapped here to an index
     // into the visible list.
-    val visibleTabs = Tab.entries.filter { it.hasContent(ui.state) }
+    // Outputs that belong to a detected cover are shown only on the Redőny tab, never as standalone
+    // PCA/relay tiles (mirrors the bridge's cover_output_ids()).
+    val coverMemberIds = remember(covers) { covers.flatMap { listOf(it.upId, it.downId) }.toSet() }
+    val displayPcas = ui.state.pcas.filterNot { it.id in coverMemberIds }
+    val displayRelays = ui.state.relays.filterNot { it.id in coverMemberIds }
+    val tabHasContent: (Tab) -> Boolean = { tab ->
+        when (tab) {
+            Tab.HOME -> true
+            Tab.RELAYS -> displayRelays.any { it.name.isNotBlank() }
+            Tab.PCA -> displayPcas.any { it.name.isNotBlank() }
+            Tab.COVERS -> covers.isNotEmpty()
+            Tab.DIMMERS -> ui.state.pwms.any { it.name.isNotBlank() }
+            Tab.SENSORS -> ui.state.sensors.any { it.name.isNotBlank() }
+            Tab.CONTROLLED -> ui.state.hasControlledOutputs()
+        }
+    }
+    val visibleTabs = Tab.entries.filter(tabHasContent)
     val controlsEnabled = ui.status == ConnectionStatus.Connected
+    val coverActions = CoverActions(
+        onOpen = onCoverOpen, onClose = onCoverClose, onStop = onCoverStop,
+        onSwap = onCoverSwap, onRename = onCoverRename, onDisable = onCoverDisable,
+    )
     val currentTab = Tab.entries.getOrNull(selectedTab)?.takeIf { it in visibleTabs } ?: visibleTabs.firstOrNull()
     val selectedIndex = visibleTabs.indexOf(currentTab).coerceAtLeast(0)
     // Reorder mode only exists on HOME (per-server); leave it when the user swipes/taps to another tab.
@@ -402,11 +433,14 @@ fun MainScreen(
                                 onMoveZone = onMoveZone,
                                 onReorderMembers = onReorderZoneMembers,
                             )
-                            Tab.RELAYS -> TypeTabList(ui.state.relays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 RelayControlTile(it, actions, controlsEnabled)
                             }
-                            Tab.PCA -> TypeTabList(ui.state.pcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 PcaControlTile(it, actions, controlsEnabled)
+                            }
+                            Tab.COVERS -> TileGrid(covers) {
+                                CoverTile(it, controlsEnabled, expertMode, coverActions)
                             }
                             Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 PwmControlTile(it, actions, controlsEnabled)
@@ -425,16 +459,6 @@ fun MainScreen(
 
 private fun ServerState.isEmpty() =
     relays.isEmpty() && pcas.isEmpty() && pwms.isEmpty() && sensors.isEmpty()
-
-/** A tab is shown only if it has something to display (named items, or controlled outputs). */
-private fun Tab.hasContent(state: ServerState): Boolean = when (this) {
-    Tab.HOME -> true // the zone dashboard is always available (it can host the "add first zone" prompt)
-    Tab.RELAYS -> state.relays.any { it.name.isNotBlank() }
-    Tab.PCA -> state.pcas.any { it.name.isNotBlank() }
-    Tab.DIMMERS -> state.pwms.any { it.name.isNotBlank() }
-    Tab.SENSORS -> state.sensors.any { it.name.isNotBlank() }
-    Tab.CONTROLLED -> state.hasControlledOutputs()
-}
 
 private fun statusLine(ui: MyioUiState): String = when (ui.status) {
     ConnectionStatus.Connecting -> "Kapcsolódás…"
