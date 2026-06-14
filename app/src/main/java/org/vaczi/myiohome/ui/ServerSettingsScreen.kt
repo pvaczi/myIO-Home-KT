@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,6 +19,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,6 +63,7 @@ fun ServerSettingsScreen(
     onBack: () -> Unit,
     onSave: (original: MyioServer?, updated: MyioServer) -> Unit,
     onDelete: (MyioServer) -> Unit,
+    onMoveServer: (MyioServer, Boolean) -> Unit = { _, _ -> },
     discovery: DiscoveryState = DiscoveryState(),
     onStartDiscovery: (subnet: String, user: String, password: String) -> Unit = { _, _, _ -> },
     onResetDiscovery: () -> Unit = {},
@@ -105,7 +109,7 @@ fun ServerSettingsScreen(
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
-            items(servers, key = { it.id }) { server ->
+            itemsIndexed(servers, key = { _, s -> s.id }) { index, server ->
                 ListItem(
                     headlineContent = { Text(server.name) },
                     supportingContent = {
@@ -118,6 +122,12 @@ fun ServerSettingsScreen(
                     leadingContent = { Icon(Icons.Filled.Dns, contentDescription = null) },
                     trailingContent = {
                         Row {
+                            IconButton(onClick = { onMoveServer(server, true) }, enabled = index > 0) {
+                                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Feljebb")
+                            }
+                            IconButton(onClick = { onMoveServer(server, false) }, enabled = index < servers.lastIndex) {
+                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Lejjebb")
+                            }
                             IconButton(onClick = { editing = Editing(server) }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Szerkesztés")
                             }

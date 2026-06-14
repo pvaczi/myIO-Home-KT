@@ -117,9 +117,9 @@ class MyioViewModel(
         viewModelScope.launch { settings.setTheme(value) }
     }
 
-    /** Expert mode (persisted; defaults true). False = locked/simplified view (see [SettingsStore.expertMode]). */
+    /** Expert mode (persisted; defaults false). True = full edit access; false = locked/simplified view (see [SettingsStore.expertMode]). */
     val expertMode: StateFlow<Boolean> =
-        settings.expertMode.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        settings.expertMode.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     fun setExpertMode(value: Boolean) {
         viewModelScope.launch { settings.setExpertMode(value) }
@@ -234,6 +234,16 @@ class MyioViewModel(
     fun deleteZone(id: String) {
         val serverIds = servers.value.map { it.id }
         viewModelScope.launch { zones.deleteZone(id, serverIds) }
+    }
+
+    /** Move a server slot one step up (or down) in the list. Affects the aggregate tile order. No-op at the ends. */
+    fun moveServer(server: MyioServer, up: Boolean) {
+        val list = servers.value.toMutableList()
+        val i = list.indexOfFirst { it.id == server.id }
+        val j = if (up) i - 1 else i + 1
+        if (i < 0 || j !in list.indices) return
+        list.add(j, list.removeAt(i))
+        viewModelScope.launch { settings.saveServers(list) }
     }
 
     /** Move a zone one step up (or down) in the global order. No-op at the ends. */

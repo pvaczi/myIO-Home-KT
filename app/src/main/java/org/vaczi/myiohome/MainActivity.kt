@@ -161,6 +161,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack() },
                             onSave = viewModel::upsertServer,
                             onDelete = viewModel::deleteServer,
+                            onMoveServer = viewModel::moveServer,
                             discovery = discovery,
                             onStartDiscovery = viewModel::startDiscovery,
                             onResetDiscovery = viewModel::resetDiscovery,

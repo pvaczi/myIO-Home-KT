@@ -123,7 +123,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
      * locked, simplified view: servers/outputs marked hidden are filtered from display, and the
      * per-server editing tools (zone assign / reorder / visibility) are hidden.
      */
-    val expertMode: Flow<Boolean> = dataStore.data.map { it[EXPERT] ?: true }
+    val expertMode: Flow<Boolean> = dataStore.data.map { it[EXPERT] ?: false }
 
     suspend fun setExpertMode(value: Boolean) {
         dataStore.edit { it[EXPERT] = value }
