@@ -155,6 +155,9 @@ fun MainScreen(
     aggregateAssignments: Map<String, ZoneAssignments> = emptyMap(),
     globalZones: List<Zone> = emptyList(),
     aggregateActionsFor: (serverId: String) -> MyioActions = { MyioActions() },
+    // Per-server detected covers + their open/close/stop callbacks for the aggregate dashboard.
+    aggregateCovers: Map<String, List<Cover>> = emptyMap(),
+    aggregateCoverActionsFor: (serverId: String) -> CoverActions = { CoverActions() },
 ) {
     // The active editing mode is ephemeral UI state (not persisted). One enum keeps the three modes
     // (assign / reorder / visibility) mutually exclusive by construction.
@@ -355,6 +358,8 @@ fun MainScreen(
                     servers = servers,
                     perServer = aggregatePerServer,
                     assignments = aggregateAssignments,
+                    coversByServer = aggregateCovers,
+                    coverActionsFor = aggregateCoverActionsFor,
                     hiddenByServer = aggregateHiddenByServer,
                     actionsFor = aggregateActionsFor,
                     pagerState = aggregatePagerState,
@@ -426,6 +431,8 @@ fun MainScreen(
                                 actions = actions,
                                 enabled = controlsEnabled,
                                 reorderMode = reorderMode,
+                                covers = covers,
+                                coverActions = coverActions,
                                 hiddenKeys = homeExclude,
                                 onAddZone = onAddZone,
                                 onRenameZone = onRenameZone,
@@ -439,7 +446,9 @@ fun MainScreen(
                             Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 PcaControlTile(it, actions, controlsEnabled)
                             }
-                            Tab.COVERS -> TileGrid(covers) {
+                            // Like the other type tabs: a live CoverTile normally, but assignable into
+                            // zones (key = coverKey) / hideable in those edit modes.
+                            Tab.COVERS -> TypeTabList(covers, Icons.Filled.Blinds, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 CoverTile(it, controlsEnabled, expertMode, coverActions)
                             }
                             Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {

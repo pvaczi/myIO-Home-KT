@@ -511,6 +511,13 @@ class MyioViewModel(
     private val _aggregate = MutableStateFlow(AggregateUiState())
     val aggregate: StateFlow<AggregateUiState> = _aggregate.asStateFlow()
 
+    /** Detected covers per server (id → covers) for the aggregate dashboard — same structural detection
+     * + per-server overrides as the single-server [covers], recomputed as each server polls. */
+    val aggregateCovers: StateFlow<Map<String, List<Cover>>> =
+        combine(_aggregate, allCoverOverrides) { agg, allOv ->
+            agg.perServer.mapValues { (id, ui) -> CoverDetection.detect(ui.state, allOv[id] ?: emptyMap()) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
     private var aggregateJobs: List<Job> = emptyList()
     private val aggregateRepos = mutableMapOf<String, MyioRepository>()
     private val aggregateGen = mutableMapOf<String, Int>()
@@ -718,6 +725,9 @@ class MyioViewModel(
     fun aggSetPcaBrightness(serverId: String, pca: PcaOutput, value: Int) = aggregateTarget(serverId).pcaSet(pca, value)
     fun aggTogglePwm(serverId: String, pwm: PwmOutput) = aggregateTarget(serverId).pwmToggle(pwm)
     fun aggSetPwmBrightness(serverId: String, pwm: PwmOutput, value: Int) = aggregateTarget(serverId).pwmSet(pwm, value)
+    fun aggCoverOpen(serverId: String, cover: Cover) = aggregateTarget(serverId).coverOpen(cover)
+    fun aggCoverClose(serverId: String, cover: Cover) = aggregateTarget(serverId).coverClose(cover)
+    fun aggCoverStop(serverId: String, cover: Cover) = aggregateTarget(serverId).coverStop(cover)
 
     companion object {
         fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore) = viewModelFactory {

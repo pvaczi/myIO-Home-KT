@@ -22,6 +22,7 @@ import org.vaczi.myiohome.data.local.CoverStore
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.ZoneStore
 import org.vaczi.myiohome.ui.AppSettingsScreen
+import org.vaczi.myiohome.ui.CoverActions
 import org.vaczi.myiohome.ui.MainScreen
 import org.vaczi.myiohome.ui.MyioActions
 import org.vaczi.myiohome.ui.MyioViewModel
@@ -73,6 +74,14 @@ class MainActivity : ComponentActivity() {
                 val aggregate by viewModel.aggregate.collectAsStateWithLifecycle()
                 val globalZones by viewModel.globalZones.collectAsStateWithLifecycle()
                 val allAssignments by viewModel.allAssignments.collectAsStateWithLifecycle()
+                val aggregateCovers by viewModel.aggregateCovers.collectAsStateWithLifecycle()
+                val aggregateCoverActionsFor: (String) -> CoverActions = { serverId ->
+                    CoverActions(
+                        onOpen = { viewModel.aggCoverOpen(serverId, it) },
+                        onClose = { viewModel.aggCoverClose(serverId, it) },
+                        onStop = { viewModel.aggCoverStop(serverId, it) },
+                    )
+                }
                 val aggregateActionsFor: (String) -> MyioActions = { serverId ->
                     MyioActions(
                         onToggleRelay = { viewModel.aggToggleRelay(serverId, it) },
@@ -128,6 +137,8 @@ class MainActivity : ComponentActivity() {
                             aggregateAssignments = allAssignments,
                             globalZones = globalZones,
                             aggregateActionsFor = aggregateActionsFor,
+                            aggregateCovers = aggregateCovers,
+                            aggregateCoverActionsFor = aggregateCoverActionsFor,
                         )
                     }
                     composable("settings") {
