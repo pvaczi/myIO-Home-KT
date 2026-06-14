@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.vaczi.myiohome.data.model.CoverOverride
 
 /**
  * A self-contained, shareable snapshot of the app's user configuration: the server slots (incl. their
@@ -25,6 +26,9 @@ data class SettingsBackup(
     val servers: List<MyioServer> = emptyList(),
     val zones: List<Zone> = emptyList(),
     val assignments: Map<String, ZoneAssignments> = emptyMap(),
+    // Per-server cover overrides (serverId → coverKey → override). Additive/optional: older backups
+    // that lack it decode to an empty map (pure auto-detection on the receiving device).
+    val coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -42,11 +46,18 @@ data class SettingsBackup(
             servers: List<MyioServer>,
             zones: List<Zone>,
             assignments: Map<String, ZoneAssignments>,
+            coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
         ): String = json.encodeToString(
             serializer(),
             // forSharing() swaps in each slot's optional share credentials (e.g. family) so the exporter
             // never has to change their own admin login to share a restricted copy.
-            SettingsBackup(theme = theme, servers = servers.map { it.forSharing() }, zones = zones, assignments = assignments),
+            SettingsBackup(
+                theme = theme,
+                servers = servers.map { it.forSharing() },
+                zones = zones,
+                assignments = assignments,
+                coverOverrides = coverOverrides,
+            ),
         )
 
         /**

@@ -8,6 +8,7 @@ import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
+import org.vaczi.myiohome.data.model.CoverOverride
 
 class SettingsBackupTest {
 
@@ -72,6 +73,27 @@ class SettingsBackupTest {
         assertNull(SettingsBackup.decode(""))
         assertNull(SettingsBackup.decode("not json at all"))
         assertNull(SettingsBackup.decode("[1,2,3]"))
+    }
+
+    @Test
+    fun roundTripsCoverOverrides() {
+        val servers = listOf(MyioServer(name = "Redőny", host = "10.0.0.3"))
+        val coverOverrides = mapOf(
+            servers[0].id to mapOf(
+                "C2001" to CoverOverride(swapped = true),
+                "C2005" to CoverOverride(name = "Konyha redőny", disabled = true),
+            ),
+        )
+        val blob = SettingsBackup.encode(AppTheme.GREEN, servers, emptyList(), emptyMap(), coverOverrides)
+        val decoded = SettingsBackup.decode(blob)!!
+        assertEquals(coverOverrides, decoded.coverOverrides)
+    }
+
+    @Test
+    fun olderBackupWithoutCoverOverridesDecodesEmpty() {
+        // A v1-style blob (no coverOverrides key) must still decode, with an empty map.
+        val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap())
+        assertEquals(emptyMap<String, Map<String, CoverOverride>>(), SettingsBackup.decode(blob)!!.coverOverrides)
     }
 
     @Test

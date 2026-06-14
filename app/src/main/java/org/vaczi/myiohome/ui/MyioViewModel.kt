@@ -175,6 +175,15 @@ class MyioViewModel(
         CoverDetection.detect(u.state, ov)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Every server's cover overrides, keyed by server id — included in the shareable settings backup. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val allCoverOverrides: StateFlow<Map<String, Map<String, CoverOverride>>> = settings.servers
+        .flatMapLatest { list ->
+            if (list.isEmpty()) flowOf(emptyMap())
+            else combine(list.map { s -> coverStore.overrides(s.id).map { s.id to it } }) { it.toMap() }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
     /** Edit one cover's override on the current server (disable / swap orientation / rename). */
     private fun editCover(coverKey: String, transform: (CoverOverride) -> CoverOverride) {
         val server = currentServer.value ?: return
@@ -402,6 +411,7 @@ class MyioViewModel(
         servers = servers.value,
         zones = globalZones.value,
         assignments = allAssignments.value,
+        coverOverrides = allCoverOverrides.value,
     )
 
     /**
@@ -414,6 +424,7 @@ class MyioViewModel(
             settings.setTheme(backup.theme)
             settings.saveServers(backup.servers)
             zones.replaceAll(backup.zones, backup.assignments)
+            coverStore.replaceAll(backup.coverOverrides)
             settings.selectServer(backup.servers.firstOrNull()?.id ?: "")
         }
     }
