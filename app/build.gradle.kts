@@ -15,13 +15,13 @@ android {
         applicationId = "org.vaczi.myiohome"
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
     }
 
     signingConfigs {
         // Release upload-kulcs (Play App Signing). Aktív, ha a VACZI_* property-k ki vannak töltve
-        // (a fejlesztő gépén ~/.gradle/gradle.properties → Dev/keys/gradle.properties symlinken át)
+        // (a fejlesztő gépén ~/.gradle/gradle.properties → Downloads/Keys/gradle.properties hardlinken át)
         // ÉS a keystore-fájl létezik. Más gépen / üres jelszónál a release a debug-kulcsra esik
         // vissza (lentebb), hogy a lokális :app:assembleRelease sose törjön el.
         create("release") {
