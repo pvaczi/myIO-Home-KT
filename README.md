@@ -2,9 +2,9 @@
 
 Modern, önálló Android-kliens [myIO](https://smarthomeninja.hu/) okosotthon-vezérlőkhöz.
 Kotlin + Jetpack Compose + Material 3. Közvetlenül a myIO eszközökkel kommunikál a helyi
-hálózaton, a **80-as HTTP REST porton** — nincs szükség külön bridge-re vagy Home Assistant-ra.
+hálózaton, a **80-as HTTP REST porton**.
 
-> A `myIO-Home-PV` (régi Java-fork) teljes újraírása. `applicationId`: `org.vaczi.myiohome`.
+> `applicationId`: `org.vaczi.myiohome`.
 
 ## Funkciók
 

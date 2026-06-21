@@ -239,7 +239,7 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                 )
                 Text(
                     "myIO okosotthon-vezérlő kliens. Közvetlenül a LAN-on, a myIO eszközök " +
-                        "80-as HTTP portján kommunikál — bridge vagy felhő nélkül.",
+                        "80-as HTTP portján kommunikál — felhő nélkül.",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 12.dp),
                 )
