@@ -8,7 +8,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.json.Json
 import org.vaczi.myiohome.data.model.ServerState
 
 private val Context.stateCacheDataStore: DataStore<Preferences> by preferencesDataStore(name = "state_cache")
@@ -23,17 +22,15 @@ class StateCacheStore(private val dataStore: DataStore<Preferences>) {
     constructor(context: Context) : this(context.stateCacheDataStore)
 
     suspend fun load(serverId: String): ServerState? {
+        // Not decodeOrDefault: a corrupt/absent cache must stay null (skip the instant render), not fall
+        // back to an empty ServerState that would look like a real, empty device.
         val blob = dataStore.data.map { it[key(serverId)] }.first() ?: return null
-        return runCatching { json.decodeFromString(ServerState.serializer(), blob) }.getOrNull()
+        return runCatching { StoreJson.decodeFromString(ServerState.serializer(), blob) }.getOrNull()
     }
 
     suspend fun save(serverId: String, state: ServerState) {
-        dataStore.edit { it[key(serverId)] = json.encodeToString(ServerState.serializer(), state) }
+        dataStore.edit { it[key(serverId)] = StoreJson.encodeToString(ServerState.serializer(), state) }
     }
 
     private fun key(serverId: String) = stringPreferencesKey("state_$serverId")
-
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    }
 }

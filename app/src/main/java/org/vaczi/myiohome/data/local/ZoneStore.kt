@@ -8,9 +8,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 /** A user-named zone (tag). Zones are **global** (shared across servers); outputs are assigned to them
  * per server (see [ZoneAssignments]). Outputs are assigned many-to-many. */
@@ -66,19 +66,39 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
 
     constructor(context: Context) : this(context.zonesDataStore)
 
+    // distinctUntilChanged on the raw blob so unrelated writes into the same Preferences file (another
+    // server's assignment, the hideZoned toggle) don't force a re-decode + downstream recomposition.
     /** The global zone registry (id + name + display order). Shared across all servers. */
-    val globalZones: Flow<List<Zone>> = dataStore.data.map { parseZones(it[ZONES_GLOBAL]) }
+    val globalZones: Flow<List<Zone>> =
+        dataStore.data.map { it[ZONES_GLOBAL] }.distinctUntilChanged().map { parseZones(it) }
 
+    /** Full-replace write of the global zone list. For in-place mutations prefer [updateZones]. */
     suspend fun saveZones(list: List<Zone>) {
-        dataStore.edit { it[ZONES_GLOBAL] = json.encodeToString(zonesSerializer, list) }
+        dataStore.edit { it[ZONES_GLOBAL] = StoreJson.encodeToString(zonesSerializer, list) }
+    }
+
+    /** Atomically read-modify-write the global zone list (transform runs inside the transaction). */
+    suspend fun updateZones(transform: (List<Zone>) -> List<Zone>) {
+        dataStore.edit {
+            it[ZONES_GLOBAL] = StoreJson.encodeToString(zonesSerializer, transform(parseZones(it[ZONES_GLOBAL])))
+        }
     }
 
     /** One server's output→zone assignment + member order. */
     fun assignments(serverId: String): Flow<ZoneAssignments> =
-        dataStore.data.map { parseAssignments(it[assignKey(serverId)]) }
+        dataStore.data.map { it[assignKey(serverId)] }.distinctUntilChanged().map { parseAssignments(it) }
 
+    /** Full-replace write of one server's assignment. For in-place mutations prefer [updateAssignments]. */
     suspend fun saveAssignments(serverId: String, value: ZoneAssignments) {
-        dataStore.edit { it[assignKey(serverId)] = json.encodeToString(ZoneAssignments.serializer(), value) }
+        dataStore.edit { it[assignKey(serverId)] = StoreJson.encodeToString(ZoneAssignments.serializer(), value) }
+    }
+
+    /** Atomically read-modify-write one server's assignment (transform runs inside the transaction). */
+    suspend fun updateAssignments(serverId: String, transform: (ZoneAssignments) -> ZoneAssignments) {
+        dataStore.edit {
+            it[assignKey(serverId)] =
+                StoreJson.encodeToString(ZoneAssignments.serializer(), transform(parseAssignments(it[assignKey(serverId)])))
+        }
     }
 
     /**
@@ -87,7 +107,7 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
      */
     suspend fun deleteZone(zoneId: String, serverIds: List<String>) {
         dataStore.edit { prefs ->
-            prefs[ZONES_GLOBAL] = json.encodeToString(
+            prefs[ZONES_GLOBAL] = StoreJson.encodeToString(
                 zonesSerializer,
                 parseZones(prefs[ZONES_GLOBAL]).filterNot { it.id == zoneId },
             )
@@ -96,7 +116,7 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
                 val assignments = a.assignments
                     .mapValues { (_, ids) -> ids - zoneId }
                     .filterValues { it.isNotEmpty() }
-                prefs[assignKey(id)] = json.encodeToString(
+                prefs[assignKey(id)] = StoreJson.encodeToString(
                     ZoneAssignments.serializer(),
                     ZoneAssignments(assignments = assignments, memberOrder = a.memberOrder - zoneId),
                 )
@@ -112,15 +132,15 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
     suspend fun replaceAll(zones: List<Zone>, assignmentsByServer: Map<String, ZoneAssignments>) {
         dataStore.edit { prefs ->
             prefs.asMap().keys.filter { it.name.startsWith("assign_") }.forEach { prefs.remove(it) }
-            prefs[ZONES_GLOBAL] = json.encodeToString(zonesSerializer, zones)
+            prefs[ZONES_GLOBAL] = StoreJson.encodeToString(zonesSerializer, zones)
             for ((serverId, value) in assignmentsByServer) {
-                prefs[assignKey(serverId)] = json.encodeToString(ZoneAssignments.serializer(), value)
+                prefs[assignKey(serverId)] = StoreJson.encodeToString(ZoneAssignments.serializer(), value)
             }
         }
     }
 
     /** Hide outputs that already have a zone (so only the unassigned remainder shows). Global toggle. */
-    val hideZoned: Flow<Boolean> = dataStore.data.map { it[HIDE_ZONED] ?: false }
+    val hideZoned: Flow<Boolean> = dataStore.data.map { it[HIDE_ZONED] ?: false }.distinctUntilChanged()
 
     suspend fun setHideZoned(value: Boolean) {
         dataStore.edit { it[HIDE_ZONED] = value }
@@ -131,21 +151,12 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
     companion object {
         private val ZONES_GLOBAL = stringPreferencesKey("zones_global")
         private val HIDE_ZONED = booleanPreferencesKey("hide_zoned")
-        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private val zonesSerializer = kotlinx.serialization.builtins.ListSerializer(Zone.serializer())
 
         /** Pure parse — null/blank/corrupt → empty list. Unit-testable without DataStore. */
-        fun parseZones(blob: String?): List<Zone> {
-            if (blob.isNullOrBlank()) return emptyList()
-            return runCatching { json.decodeFromString(zonesSerializer, blob) }.getOrDefault(emptyList())
-        }
+        fun parseZones(blob: String?): List<Zone> = decodeOrDefault(blob, emptyList())
 
         /** Pure parse — null/blank/corrupt → empty assignment. Unit-testable without DataStore. */
-        fun parseAssignments(blob: String?): ZoneAssignments {
-            if (blob.isNullOrBlank()) return ZoneAssignments()
-            return runCatching {
-                json.decodeFromString(ZoneAssignments.serializer(), blob)
-            }.getOrDefault(ZoneAssignments())
-        }
+        fun parseAssignments(blob: String?): ZoneAssignments = decodeOrDefault(blob, ZoneAssignments())
     }
 }

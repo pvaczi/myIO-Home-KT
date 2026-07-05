@@ -67,7 +67,7 @@ object MyioParser {
                 },
             sensors = root.sensors.values
                 .sortedBy { it.id }
-                .mapNotNull { it.toSensorOrNull() },
+                .flatMap { it.toSensors() },
             protectionPairs = root.protection
                 .mapNotNull { (key, p) ->
                     // Skip empty slots (element 0). The map key is the protection index.
@@ -89,11 +89,15 @@ object MyioParser {
         )
     }
 
-    private fun SensorDto.toSensorOrNull(): Sensor? = when {
-        temp != null -> Sensor(id, description.orEmpty(), SensorKind.TEMPERATURE, temp / 100.0)
-        hum != null -> Sensor(id, description.orEmpty(), SensorKind.HUMIDITY, hum / 100.0)
+    /**
+     * A device entry can carry more than one physical reading (e.g. a combined temp+humidity probe
+     * reports both `temp` and `hum` under the same id) — emit one [Sensor] per present field rather
+     * than picking just the first match, or the secondary reading is silently lost.
+     */
+    private fun SensorDto.toSensors(): List<Sensor> = buildList {
+        if (temp != null) add(Sensor(id, description.orEmpty(), SensorKind.TEMPERATURE, temp / 100.0))
+        if (hum != null) add(Sensor(id, description.orEmpty(), SensorKind.HUMIDITY, hum / 100.0))
         // imp == 0 means no energy meter is connected (matches the bridge dsens_parser) → drop it.
-        imp != null && imp != 0 -> Sensor(id, description.orEmpty(), SensorKind.ENERGY, imp / 100.0)
-        else -> null
+        if (imp != null && imp != 0) add(Sensor(id, description.orEmpty(), SensorKind.ENERGY, imp / 100.0))
     }
 }

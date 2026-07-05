@@ -61,6 +61,21 @@ class MyioParserTest {
     }
 
     @Test
+    fun combinedTempAndHumiditySensorYieldsBothReadings() {
+        // A single device entry carrying both `temp` and `hum` (a combined probe) must produce TWO
+        // Sensor entries, not just the first-matching kind — otherwise the humidity reading is lost.
+        val body = """{"sensors":{"0":{"id":5,"temp":2243,"hum":4550}}}"""
+        val state = MyioParser.parseState(body)
+        assertEquals(2, state.sensors.size)
+        val temp = state.sensors.first { it.kind == SensorKind.TEMPERATURE }
+        val hum = state.sensors.first { it.kind == SensorKind.HUMIDITY }
+        assertEquals(5, temp.id)
+        assertEquals(22.43, temp.value, 0.001)
+        assertEquals(5, hum.id)
+        assertEquals(45.50, hum.value, 0.001)
+    }
+
+    @Test
     fun parsesProtectionPairs() {
         val state = MyioParser.parseState(fixture("sens_out-redony.json"))
         // The real device exposes 37 protection entries; one is a duplicate (2051/2052) but the parser

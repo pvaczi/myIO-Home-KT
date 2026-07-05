@@ -34,12 +34,11 @@ data class SettingsBackup(
         const val MAGIC = "myio-home-settings"
         const val CURRENT_VERSION = 1
 
-        // encodeDefaults so the magic/version are always written; prettyPrint so a shared file is readable.
-        private val json = Json {
-            ignoreUnknownKeys = true
-            encodeDefaults = true
-            prettyPrint = true
-        }
+        // Derived from the shared [StoreJson] (same ignoreUnknownKeys + encodeDefaults) with prettyPrint
+        // added: unlike the internal store blobs, a shared file is meant to be human-readable. Kept as its
+        // own instance (not folded into StoreJson) because only this format is pretty-printed and its
+        // [decode] additionally needs parseToJsonElement for the magic-field guard below.
+        private val json = Json(from = StoreJson) { prettyPrint = true }
 
         fun encode(
             theme: AppTheme,

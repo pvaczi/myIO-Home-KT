@@ -79,14 +79,18 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.vaczi.myiohome.data.local.MyioServer
+import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.local.ZoneConfig
 import org.vaczi.myiohome.data.model.Cover
 import org.vaczi.myiohome.data.model.PcaOutput
+import org.vaczi.myiohome.data.model.expandAssignmentsForDisabledCovers
+import org.vaczi.myiohome.data.model.expandHiddenForDisabledCovers
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.model.memberIds
 import org.vaczi.myiohome.data.model.outputKey
 
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -126,12 +130,17 @@ fun MainScreen(
     showAggregate: Boolean = false,
     onSelectAggregate: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    selectedTab: Int = 0,
-    onSelectTab: (Int) -> Unit = {},
+    // Persisted last tab as a stable Tab *name* (null = none yet); legacy ordinals resolve via resolveTab.
+    selectedTab: String? = null,
+    onSelectTab: (String) -> Unit = {},
     // Expert mode: when false, hidden servers/outputs are filtered from display and the per-server
     // editing tools (assign / reorder / visibility) are hidden — a locked, simplified view.
     expertMode: Boolean = true,
     onToggleOutputHidden: (outputKey: String) -> Unit = {},
+    // Disabled-cover endpoint keys (coverKey → P/R keys) so a hidden/zoned cover that's been demoted to
+    // "not a cover" keeps hiding/zoning its now-plain outputs. Single server; per-server for the aggregate.
+    disabledCoverMembers: Map<String, List<String>> = emptyMap(),
+    aggregateDisabledMembers: Map<String, Map<String, List<String>>> = emptyMap(),
     zoneConfig: ZoneConfig = ZoneConfig(),
     hideZoned: Boolean = false,
     onSetHideZoned: (Boolean) -> Unit = {},
@@ -179,15 +188,34 @@ fun MainScreen(
     }
     // Hidden-output sets, derived from the slots. In expert mode nothing is filtered (full visibility);
     // in non-expert mode hidden outputs disappear from every view, including the home/aggregate dashboards.
-    val hiddenKeys = currentServer?.hiddenOutputs?.toSet() ?: emptySet()
+    // A hidden cover that was later marked "not a cover" (disabled) also hides its two now-plain endpoints
+    // (its C-key hidden flag extends to the P/R keys) — otherwise the deliberately-hidden device would
+    // resurface as controllable. Read-time only, so re-enabling the cover restores the pair automatically.
+    val hiddenKeys = remember(currentServer, disabledCoverMembers) {
+        expandHiddenForDisabledCovers(currentServer?.hiddenOutputs?.toSet() ?: emptySet(), disabledCoverMembers)
+    }
     val hideUi = HideUi(hideMode = hideMode, hiddenKeys = hiddenKeys, onToggleHidden = onToggleOutputHidden)
     val homeExclude = if (expertMode) emptySet() else hiddenKeys
-    val aggregateHiddenByServer =
-        if (expertMode) emptyMap() else servers.associate { it.id to it.hiddenOutputs.toSet() }
+    val aggregateHiddenByServer = remember(expertMode, servers, aggregateDisabledMembers) {
+        if (expertMode) emptyMap()
+        else servers.associate { s ->
+            s.id to expandHiddenForDisabledCovers(s.hiddenOutputs.toSet(), aggregateDisabledMembers[s.id].orEmpty())
+        }
+    }
+    // Same extension for zone assignments: a disabled cover's C-key zone membership propagates to its
+    // endpoint keys so the demoted outputs stay in their zone / on the home dashboard instead of orphaning.
+    val effectiveZoneConfig = remember(zoneConfig, disabledCoverMembers) {
+        zoneConfig.copy(assignments = expandAssignmentsForDisabledCovers(zoneConfig.assignments, disabledCoverMembers))
+    }
+    val effectiveAggregateAssignments = remember(aggregateAssignments, aggregateDisabledMembers) {
+        aggregateAssignments.mapValues { (id, a) ->
+            a.copy(assignments = expandAssignmentsForDisabledCovers(a.assignments, aggregateDisabledMembers[id].orEmpty()))
+        }
+    }
     // The switcher only lists hidden servers in expert mode; non-expert sees just the enabled slots.
     val switcherServers = if (expertMode) servers else servers.filterNot { it.hidden }
     val zoneUi = ZoneUi(
-        config = zoneConfig,
+        config = effectiveZoneConfig,
         assignMode = assignMode,
         activeZoneId = activeZoneId,
         hideZoned = hideZoned,
@@ -200,27 +228,33 @@ fun MainScreen(
     // into the visible list.
     // Outputs that belong to a detected cover are shown only on the Redőny tab, never as standalone
     // PCA/relay tiles (mirrors the bridge's cover_output_ids()).
-    val coverMemberIds = remember(covers) { covers.flatMap { listOf(it.upId, it.downId) }.toSet() }
-    val displayPcas = ui.state.pcas.filterNot { it.id in coverMemberIds }
-    val displayRelays = ui.state.relays.filterNot { it.id in coverMemberIds }
-    val tabHasContent: (Tab) -> Boolean = { tab ->
-        when (tab) {
-            Tab.HOME -> true
-            Tab.RELAYS -> displayRelays.any { it.name.isNotBlank() }
-            Tab.PCA -> displayPcas.any { it.name.isNotBlank() }
-            Tab.COVERS -> covers.isNotEmpty()
-            Tab.DIMMERS -> ui.state.pwms.any { it.name.isNotBlank() }
-            Tab.SENSORS -> ui.state.sensors.any { it.name.isNotBlank() }
-            Tab.CONTROLLED -> ui.state.hasControlledOutputs()
+    val coverMemberIds = remember(covers) { covers.memberIds() }
+    val displayPcas = remember(ui.state.pcas, coverMemberIds) { ui.state.pcas.filterNot { it.id in coverMemberIds } }
+    val displayRelays = remember(ui.state.relays, coverMemberIds) { ui.state.relays.filterNot { it.id in coverMemberIds } }
+    val visibleTabs = remember(displayRelays, displayPcas, covers, ui.state) {
+        val tabHasContent: (Tab) -> Boolean = { tab ->
+            when (tab) {
+                Tab.HOME -> true
+                Tab.RELAYS -> displayRelays.any { it.name.isNotBlank() }
+                Tab.PCA -> displayPcas.any { it.name.isNotBlank() }
+                Tab.COVERS -> covers.isNotEmpty()
+                Tab.DIMMERS -> ui.state.pwms.any { it.name.isNotBlank() }
+                Tab.SENSORS -> ui.state.sensors.any { it.name.isNotBlank() }
+                Tab.CONTROLLED -> ui.state.hasControlledOutputs()
+            }
         }
+        Tab.entries.filter(tabHasContent)
     }
-    val visibleTabs = Tab.entries.filter(tabHasContent)
     val controlsEnabled = ui.status == ConnectionStatus.Connected
     val coverActions = CoverActions(
         onOpen = onCoverOpen, onClose = onCoverClose, onStop = onCoverStop,
         onSwap = onCoverSwap, onRename = onCoverRename, onDisable = onCoverDisable,
     )
-    val currentTab = Tab.entries.getOrNull(selectedTab)?.takeIf { it in visibleTabs } ?: visibleTabs.firstOrNull()
+    // Resolve the persisted tab: a Tab name directly, or a legacy ordinal migrated via the current enum
+    // order (see SettingsStore.resolveTab). Falls back to the first visible tab.
+    val resolvedTabName = remember(selectedTab) { SettingsStore.resolveTab(selectedTab, Tab.entries.map { it.name }) }
+    val currentTab = Tab.entries.firstOrNull { it.name == resolvedTabName }?.takeIf { it in visibleTabs }
+        ?: visibleTabs.firstOrNull()
     val selectedIndex = visibleTabs.indexOf(currentTab).coerceAtLeast(0)
     // Reorder mode only exists on HOME (per-server); leave it when the user swipes/taps to another tab.
     // In aggregate mode reorder lives on the "Összes" summary page instead, so this guard skips it.
@@ -236,10 +270,16 @@ fun MainScreen(
             pagerState.animateScrollToPage(selectedIndex)
         }
     }
+    // While a server switch is loading, [ui.state] is momentarily empty and [visibleTabs] collapses to
+    // just HOME — settling on page 0 there would persist HOME over the new server's actually-saved tab.
+    // Only persist once real data has loaded.
+    val stateLoaded = rememberUpdatedState(!ui.state.isEmpty())
     LaunchedEffect(pagerState) {
         // drop(1): ignore the initial settle so we don't clobber the restored tab on launch.
         snapshotFlow { pagerState.settledPage }.drop(1).collect { page ->
-            tabsState.value.getOrNull(page)?.let { onSelectTab(it.ordinal) }
+            if (stateLoaded.value) {
+                tabsState.value.getOrNull(page)?.let { onSelectTab(it.name) }
+            }
         }
     }
 
@@ -342,7 +382,7 @@ fun MainScreen(
                     visibleTabs.forEachIndexed { index, t ->
                         NavigationBarItem(
                             selected = selectedIndex == index,
-                            onClick = { onSelectTab(t.ordinal) },
+                            onClick = { onSelectTab(t.name) },
                             icon = { Icon(t.icon, contentDescription = t.label) },
                             label = { Text(t.label) },
                         )
@@ -357,7 +397,7 @@ fun MainScreen(
                     zones = globalZones,
                     servers = servers,
                     perServer = aggregatePerServer,
-                    assignments = aggregateAssignments,
+                    assignments = effectiveAggregateAssignments,
                     coversByServer = aggregateCovers,
                     coverActionsFor = aggregateCoverActionsFor,
                     hiddenByServer = aggregateHiddenByServer,
@@ -400,12 +440,7 @@ fun MainScreen(
                         Text("Nevek betöltése…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
 
-                visibleTabs.isEmpty() ->
-                    Text(
-                        "Nincs megjeleníthető elem",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
+                visibleTabs.isEmpty() -> EmptyListHint()
 
                 else -> Column(Modifier.fillMaxSize()) {
                     // While assigning, a tonal bar (distinct colour = MD mode feedback) holds the active
@@ -427,7 +462,7 @@ fun MainScreen(
                         when (visibleTabs[page]) {
                             Tab.HOME -> HomeScreen(
                                 state = ui.state,
-                                zoneConfig = zoneConfig,
+                                zoneConfig = effectiveZoneConfig,
                                 actions = actions,
                                 enabled = controlsEnabled,
                                 reorderMode = reorderMode,
@@ -457,7 +492,7 @@ fun MainScreen(
                             Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Thermostat, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 SensorTile(it.name, formatSensor(it))
                             }
-                            Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled, expertMode)
+                            Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled, expertMode, homeExclude)
                         }
                     }
                 }

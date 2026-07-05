@@ -35,7 +35,8 @@ class MyioHttpClient(
     private val base = "http://${config.host}:${config.port}"
     private val authHeader: String = run {
         val raw = "${config.user}:${config.password}"
-        "Basic " + Base64.encodeToString(raw.toByteArray(Charsets.US_ASCII), Base64.NO_WRAP)
+        // ISO-8859-1 (OkHttp's Credentials.basic default): US_ASCII silently maps non-ASCII to '?'.
+        "Basic " + Base64.encodeToString(raw.toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP)
     }
 
     /** One-time server metadata. */

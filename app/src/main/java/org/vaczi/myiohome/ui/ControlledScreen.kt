@@ -4,18 +4,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalIconButton
@@ -40,6 +37,7 @@ import kotlinx.coroutines.delay
 import org.vaczi.myiohome.data.model.Sensor
 import org.vaczi.myiohome.data.model.SensorKind
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.model.outputKey
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -52,13 +50,18 @@ import kotlin.math.roundToInt
  * the controlling sensor's kind. Heating mode = on-threshold below off-threshold; cooling is the reverse.
  */
 @Composable
-fun ControlledList(state: ServerState, actions: MyioActions, enabled: Boolean, expertMode: Boolean) {
-    val items = remember(state) { state.controlledItems(actions) }
+fun ControlledList(
+    state: ServerState,
+    actions: MyioActions,
+    enabled: Boolean,
+    expertMode: Boolean,
+    /** Output keys to exclude from display (non-expert hidden set); empty in expert mode. */
+    hiddenKeys: Set<String> = emptySet(),
+) {
+    val items = remember(state, hiddenKeys) { state.controlledItems(actions).filter { it.key !in hiddenKeys } }
 
     if (items.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Nincs termosztát-vezérelt kimenet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        EmptyListHint("Nincs termosztát-vezérelt kimenet")
         return
     }
 
@@ -109,11 +112,7 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!item.writable) {
-                    Icon(
-                        Icons.Filled.Lock,
-                        contentDescription = "Csak megtekintés (nincs vezérlési jog)",
-                        modifier = Modifier.size(20.dp),
-                    )
+                    LockBadge()
                 } else {
                     IconButton(onClick = onEdit, enabled = enabled) {
                         Icon(Icons.Filled.Edit, contentDescription = "Küszöbök szerkesztése")
@@ -284,7 +283,7 @@ private fun ServerState.controlledItems(actions: MyioActions): List<ControlledIt
     relays.forEach { r ->
         val sensor = controllingSensor(r.sensorId) ?: return@forEach
         add(
-            ControlledItem("r${r.id}", r.name.ifBlank { "Relé ${r.id}" }, if (r.on) "BE" else "KI",
+            ControlledItem(r.outputKey(), r.name.ifBlank { "Relé ${r.id}" }, if (r.on) "BE" else "KI",
                 sensor, r.sensorOnTenths, r.sensorOffTenths, r.writable) { on, off -> actions.onSetRelayThermostat(r, on, off) },
         )
     }
@@ -292,14 +291,14 @@ private fun ServerState.controlledItems(actions: MyioActions): List<ControlledIt
         val sensor = controllingSensor(p.sensorId) ?: return@forEach
         val v = if (p.isPwm) "${percent(p.state)}%" else if (p.on) "BE" else "KI"
         add(
-            ControlledItem("p${p.id}", p.name.ifBlank { "PCA ${p.id}" }, v,
+            ControlledItem(p.outputKey(), p.name.ifBlank { "PCA ${p.id}" }, v,
                 sensor, p.sensorOnTenths, p.sensorOffTenths, p.writable) { on, off -> actions.onSetPcaThermostat(p, on, off) },
         )
     }
     pwms.forEach { w ->
         val sensor = controllingSensor(w.sensorId) ?: return@forEach
         add(
-            ControlledItem("w${w.id}", w.name.ifBlank { "Dimmer ${w.id}" }, "${percent(w.state)}%",
+            ControlledItem(w.outputKey(), w.name.ifBlank { "Dimmer ${w.id}" }, "${percent(w.state)}%",
                 sensor, w.sensorOnTenths, w.sensorOffTenths, w.writable) { on, off -> actions.onSetPwmThermostat(w, on, off) },
         )
     }

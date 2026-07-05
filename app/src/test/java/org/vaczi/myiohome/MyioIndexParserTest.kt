@@ -63,4 +63,25 @@ class MyioIndexParserTest {
         assertNull(empty.relayPerms[1])
         assertFalse(empty.pcaTurnOn.containsKey(2001))
     }
+
+    @Test
+    fun nonNumericElementKeepsLaterIndicesAligned() {
+        // A stray non-numeric element (e.g. a firmware glitch) must NOT shift the ids of the elements
+        // after it: relays[]=[101, undefined, 100] → id 1=101, id 2=0 (no rights, fail-closed for that
+        // slot only), id 3 must still decode 100 — not the value that would land there if the bad
+        // element were dropped instead of zeroed.
+        val html = "<script>var relays=[101, undefined, 100];</script>"
+        val meta = MyioIndexParser.parse(html)
+        assertEquals(Perm(readable = true, writable = false), meta.relayPerms[1])  // 101
+        assertEquals(Perm(readable = false, writable = false), meta.relayPerms[2]) // undefined → 0
+        assertEquals(Perm(readable = true, writable = false), meta.relayPerms[3])  // 100, correctly at id 3
+    }
+
+    @Test
+    fun emptyArrayYieldsNoEntries() {
+        // `var relays=[];` must not be treated as a single zero-valued element.
+        val html = "<script>var relays=[];</script>"
+        val meta = MyioIndexParser.parse(html)
+        assertTrue(meta.relayPerms.isEmpty())
+    }
 }

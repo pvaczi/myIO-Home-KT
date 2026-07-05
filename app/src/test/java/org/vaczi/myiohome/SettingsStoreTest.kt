@@ -65,6 +65,23 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun resolveTabMigratesLegacyOrdinalAndKeepsNames() {
+        // The real tab order (as of the COVERS insertion). resolveTab is order-parameterised so it can't
+        // drift from the enum.
+        val order = listOf("HOME", "RELAYS", "PCA", "COVERS", "DIMMERS", "SENSORS", "CONTROLLED")
+        // New format: a stored name resolves to itself.
+        assertEquals("PCA", SettingsStore.resolveTab("PCA", order))
+        // Legacy format: a stored ordinal maps through the *current* order (2 → PCA, 3 → COVERS).
+        assertEquals("PCA", SettingsStore.resolveTab("2", order))
+        assertEquals("COVERS", SettingsStore.resolveTab("3", order))
+        // Nothing stored, or an out-of-range/removed value → null (caller falls back to the first tab).
+        assertEquals(null, SettingsStore.resolveTab(null, order))
+        assertEquals(null, SettingsStore.resolveTab("", order))
+        assertEquals(null, SettingsStore.resolveTab("99", order))
+        assertEquals(null, SettingsStore.resolveTab("GHOST", order))
+    }
+
+    @Test
     fun legacyServersWithoutIdGetDistinctIds() {
         // Pre-id persisted format with two slots sharing a host — this used to crash the editor
         // (duplicate LazyColumn keys). Each must now decode to a distinct, non-blank id.

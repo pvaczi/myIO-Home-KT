@@ -9,9 +9,9 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +47,7 @@ import org.vaczi.myiohome.data.model.ServerState
 import org.vaczi.myiohome.data.net.DiscoveredServer
 import org.vaczi.myiohome.data.net.MyioCommands
 import org.vaczi.myiohome.data.net.MyioDiscovery
+import org.vaczi.myiohome.data.net.ServerConfig
 import org.vaczi.myiohome.data.repo.MyioRepository
 
 enum class ConnectionStatus { Connecting, Connected, Error }
@@ -131,15 +132,20 @@ class MyioViewModel(
      * the slot's content (not its id) doesn't re-point the poll loop.
      */
     fun toggleOutputHidden(outputKey: String) {
-        val server = currentServer.value ?: return
-        val updated = if (outputKey in server.hiddenOutputs) server.hiddenOutputs - outputKey
-        else server.hiddenOutputs + outputKey
-        saveServerEdit(server.copy(hiddenOutputs = updated))
-    }
-
-    private fun saveServerEdit(updated: MyioServer) {
-        val list = servers.value.map { if (it.id == updated.id) updated else it }
-        viewModelScope.launch { settings.saveServers(list) }
+        val id = currentServer.value?.id ?: return
+        // Atomic transform inside the store so a second quick hide/show (or any other slot edit) can't be
+        // lost by writing back a stale StateFlow snapshot.
+        viewModelScope.launch {
+            settings.updateServers { list ->
+                list.map { s ->
+                    if (s.id != id) s
+                    else s.copy(
+                        hiddenOutputs = if (outputKey in s.hiddenOutputs) s.hiddenOutputs - outputKey
+                        else s.hiddenOutputs + outputKey,
+                    )
+                }
+            }
+        }
     }
 
     // --- Zones (global registry; per-server many-to-many assignment) ----------------------------
@@ -153,10 +159,19 @@ class MyioViewModel(
     val globalZones: StateFlow<List<Zone>> =
         zones.globalZones.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Every server's assignment, keyed by server id — drives the aggregate view + relevant-server filter. */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val selectedAssignments: StateFlow<ZoneAssignments> = settings.selected
-        .flatMapLatest { server -> if (server == null) flowOf(ZoneAssignments()) else zones.assignments(server.id) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ZoneAssignments())
+    val allAssignments: StateFlow<Map<String, ZoneAssignments>> = settings.servers
+        .flatMapLatest { list ->
+            if (list.isEmpty()) flowOf(emptyMap())
+            else combine(list.map { s -> zones.assignments(s.id).map { s.id to it } }) { it.toMap() }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** The selected server's assignment, derived from [allAssignments] (no extra store subscription). */
+    private val selectedAssignments: StateFlow<ZoneAssignments> =
+        combine(settings.selectedId, allAssignments) { id, all -> id?.let { all[it] } ?: ZoneAssignments() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, ZoneAssignments())
 
     /** Combined zone view for the selected server's UI (global zones + that server's assignment). */
     val zoneConfig: StateFlow<ZoneConfig> = combine(globalZones, selectedAssignments) { zs, a ->
@@ -164,16 +179,6 @@ class MyioViewModel(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ZoneConfig())
 
     // --- Covers (shutters): detected from the selected server's protection pairs + per-server overrides ---
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val selectedCoverOverrides: StateFlow<Map<String, CoverOverride>> = settings.selected
-        .flatMapLatest { server -> if (server == null) flowOf(emptyMap()) else coverStore.overrides(server.id) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
-
-    /** The detected covers for the selected server (structural detection + user overrides), recomputed on each poll. */
-    val covers: StateFlow<List<Cover>> = combine(_ui, selectedCoverOverrides) { u, ov ->
-        CoverDetection.detect(u.state, ov)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Every server's cover overrides, keyed by server id — included in the shareable settings backup. */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -183,6 +188,27 @@ class MyioViewModel(
             else combine(list.map { s -> coverStore.overrides(s.id).map { s.id to it } }) { it.toMap() }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** The selected server's cover overrides, derived from [allCoverOverrides] (no extra subscription). */
+    private val selectedCoverOverrides: StateFlow<Map<String, CoverOverride>> =
+        combine(settings.selectedId, allCoverOverrides) { id, all -> id?.let { all[it] } ?: emptyMap() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Full detection for the selected server (active covers + disabled-pair members), recomputed on each poll. */
+    private val detection: StateFlow<CoverDetection.Detection> = combine(_ui, selectedCoverOverrides) { u, ov ->
+        CoverDetection.detectAll(u.state, ov)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, CoverDetection.Detection(emptyList(), emptyMap()))
+
+    /** The detected covers for the selected server (structural detection + user overrides). */
+    val covers: StateFlow<List<Cover>> =
+        detection.map { it.covers }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Endpoint output keys of the selected server's **disabled** covers, keyed by cover key — so the UI can
+     * extend a hidden/zoned cover's `C…` key to its now-plain P/R outputs (see [expandHiddenForDisabledCovers]).
+     */
+    val disabledCoverMembers: StateFlow<Map<String, List<String>>> =
+        detection.map { it.disabledMembers }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /** Edit one cover's override on the current server (disable / swap orientation / rename). */
     private fun editCover(coverKey: String, transform: (CoverOverride) -> CoverOverride) {
@@ -196,17 +222,6 @@ class MyioViewModel(
     fun renameCover(c: Cover, name: String) =
         editCover(c.outputKey()) { it.copy(name = name.trim().ifBlank { null }) }
 
-    /** Every server's assignment, keyed by server id — drives the aggregate view + relevant-server filter. */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val allAssignmentsFlow: Flow<Map<String, ZoneAssignments>> = settings.servers
-        .flatMapLatest { list ->
-            if (list.isEmpty()) flowOf(emptyMap())
-            else combine(list.map { s -> zones.assignments(s.id).map { s.id to it } }) { it.toMap() }
-        }
-
-    val allAssignments: StateFlow<Map<String, ZoneAssignments>> =
-        allAssignmentsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
-
     /** "Hide already-zoned" toggle on the type tabs (so only unassigned outputs show while assigning). */
     val hideZoned: StateFlow<Boolean> =
         zones.hideZoned.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -219,14 +234,14 @@ class MyioViewModel(
     fun addZone(name: String): String? {
         val n = name.trim().ifBlank { return null }
         val zone = Zone(name = n)
-        viewModelScope.launch { zones.saveZones(globalZones.value + zone) }
+        viewModelScope.launch { zones.updateZones { it + zone } }
         return zone.id
     }
 
     fun renameZone(id: String, name: String) {
         val n = name.trim().ifBlank { return }
         viewModelScope.launch {
-            zones.saveZones(globalZones.value.map { if (it.id == id) it.copy(name = n) else it })
+            zones.updateZones { list -> list.map { if (it.id == id) it.copy(name = n) else it } }
         }
     }
 
@@ -236,24 +251,24 @@ class MyioViewModel(
         viewModelScope.launch { zones.deleteZone(id, serverIds) }
     }
 
+    /** Return a copy with the element matching [predicate] moved one step up (or down), or null at the ends. */
+    private fun <T> List<T>.movedOneStep(up: Boolean, predicate: (T) -> Boolean): List<T>? {
+        val i = indexOfFirst(predicate)
+        val j = if (up) i - 1 else i + 1
+        if (i < 0 || j !in indices) return null
+        return toMutableList().apply { add(j, removeAt(i)) }
+    }
+
     /** Move a server slot one step up (or down) in the list. Affects the aggregate tile order. No-op at the ends. */
     fun moveServer(server: MyioServer, up: Boolean) {
-        val list = servers.value.toMutableList()
-        val i = list.indexOfFirst { it.id == server.id }
-        val j = if (up) i - 1 else i + 1
-        if (i < 0 || j !in list.indices) return
-        list.add(j, list.removeAt(i))
-        viewModelScope.launch { settings.saveServers(list) }
+        viewModelScope.launch {
+            settings.updateServers { list -> list.movedOneStep(up) { it.id == server.id } ?: list }
+        }
     }
 
     /** Move a zone one step up (or down) in the global order. No-op at the ends. */
     fun moveZone(id: String, up: Boolean) {
-        val list = globalZones.value.toMutableList()
-        val i = list.indexOfFirst { it.id == id }
-        val j = if (up) i - 1 else i + 1
-        if (i < 0 || j !in list.indices) return
-        list.add(j, list.removeAt(i))
-        viewModelScope.launch { zones.saveZones(list) }
+        viewModelScope.launch { zones.updateZones { list -> list.movedOneStep(up) { it.id == id } ?: list } }
     }
 
     /** Persist a zone's member ordering for the selected server (the UI computes the new order). */
@@ -273,10 +288,11 @@ class MyioViewModel(
         }
     }
 
-    private inline fun editAssignments(transform: (ZoneAssignments) -> ZoneAssignments) {
+    private fun editAssignments(transform: (ZoneAssignments) -> ZoneAssignments) {
         val id = currentServer.value?.id ?: return
-        val updated = transform(selectedAssignments.value)
-        viewModelScope.launch { zones.saveAssignments(id, updated) }
+        // Atomic transform inside the store (reads the freshly-persisted value) so two quick assignment
+        // edits — a common tap-tap in assign mode — don't clobber each other via a stale snapshot.
+        viewModelScope.launch { zones.updateAssignments(id, transform) }
     }
 
     // --- LAN discovery --------------------------------------------------------------------------
@@ -308,9 +324,10 @@ class MyioViewModel(
         _discoveryState.value = DiscoveryState()
     }
 
-    /** Last-open tab index for the active server (remembered per server). Updated instantly on tap. */
-    private val _selectedTab = MutableStateFlow(0)
-    val selectedTab: StateFlow<Int> = _selectedTab.asStateFlow()
+    /** Last-open tab (by stable name) for the active server (remembered per server). Updated instantly on
+     * tap. Null until a server's saved value loads; the UI resolves legacy ordinals via [SettingsStore.resolveTab]. */
+    private val _selectedTab = MutableStateFlow<String?>(null)
+    val selectedTab: StateFlow<String?> = _selectedTab.asStateFlow()
 
     private val snapshotSaveIntervalMs = 30_000L
 
@@ -335,6 +352,9 @@ class MyioViewModel(
     @Volatile private var repo: MyioRepository? = null
     private var pollJob: Job? = null
     private var activeId: String? = null
+    // The connection config the live poll loop was built with. Compared alongside the id so a host/port/
+    // credential edit (same slot id) re-points the loop onto a fresh repo, not just an id change.
+    private var activeConfig: ServerConfig? = null
 
     /**
      * Whether the app is in the foreground. Poll loops park while this is false so a backgrounded app
@@ -354,9 +374,12 @@ class MyioViewModel(
         // the aggregate loops instead.
         viewModelScope.launch {
             settings.selected.collect { server ->
-                if (server?.id == activeId) return@collect
+                val newConfig = server?.toConfig()
+                // Re-point on id change OR connection-config change (host/port/credentials edited in place).
+                if (server?.id == activeId && newConfig == activeConfig) return@collect
                 activeId = server?.id
-                pollJob?.cancel()
+                activeConfig = newConfig
+                pollJob?.cancelAndJoin() // wait out the old loop's in-flight (blocking) call → no overlapping connection
                 if (server == null) {
                     repo = null
                     _ui.value = MyioUiState(status = ConnectionStatus.Connected, state = ServerState())
@@ -376,8 +399,11 @@ class MyioViewModel(
             combine(settings.expertMode, settings.selected, settings.servers) { e, sel, list -> Triple(e, sel, list) }
                 .collect { (expert, sel, list) ->
                     if (!expert && sel != null && sel.hidden) {
-                        if (list.size > 1) settings.selectAggregate()
-                        else list.firstOrNull { !it.hidden }?.let { settings.selectServer(it.id) }
+                        // Steer off a hidden slot to the safe aggregate (selected → null, so no per-server
+                        // controls of a hidden server show). Covers the single-hidden-slot case too, where
+                        // there's no visible alternative: selectServer("") would fall back to the (hidden)
+                        // first slot, so the aggregate is the only genuine "deselect" here.
+                        settings.selectAggregate()
                     }
                 }
         }
@@ -399,11 +425,11 @@ class MyioViewModel(
         viewModelScope.launch { settings.selectAggregate() }
     }
 
-    /** Remember the active tab for the current server (instant locally, persisted for next launch). */
-    fun selectTab(index: Int) {
-        _selectedTab.value = index
+    /** Remember the active tab (by name) for the current server (instant locally, persisted for next launch). */
+    fun selectTab(tabName: String) {
+        _selectedTab.value = tabName
         val id = currentServer.value?.id ?: return
-        viewModelScope.launch { settings.setLastTab(id, index) }
+        viewModelScope.launch { settings.setLastTab(id, tabName) }
     }
 
     /**
@@ -440,18 +466,20 @@ class MyioViewModel(
     }
 
     fun upsertServer(original: MyioServer?, updated: MyioServer) {
-        val list = servers.value.toMutableList()
-        val idx = original?.let { o -> list.indexOfFirst { it.id == o.id } } ?: -1
-        if (idx >= 0) list[idx] = updated else list.add(updated)
-        viewModelScope.launch { settings.saveServers(list) }
+        viewModelScope.launch {
+            settings.updateServers { list ->
+                val idx = original?.let { o -> list.indexOfFirst { it.id == o.id } } ?: -1
+                if (idx >= 0) list.toMutableList().apply { set(idx, updated) } else list + updated
+            }
+        }
     }
 
     /** Remove a slot (by id). The list may go empty; re-selects the first remaining if the active one went. */
     fun deleteServer(server: MyioServer) {
-        val list = servers.value.filterNot { it.id == server.id }
         viewModelScope.launch {
-            settings.saveServers(list)
-            if (currentServer.value?.id == server.id) settings.selectServer(list.firstOrNull()?.id ?: "")
+            var remaining: List<MyioServer> = emptyList()
+            settings.updateServers { list -> list.filterNot { it.id == server.id }.also { remaining = it } }
+            if (currentServer.value?.id == server.id) settings.selectServer(remaining.firstOrNull()?.id ?: "")
         }
     }
 
@@ -480,6 +508,7 @@ class MyioViewModel(
             emit { it.copy(state = snapshot) }
         }
         var refreshed = false
+        var lastMetaAttemptMs = 0L
         var lastSnapshotMs = 0L
         while (true) {
             foreground.first { it } // park while backgrounded → no polling when nobody's watching
@@ -497,11 +526,16 @@ class MyioViewModel(
                     // A command landed while this poll was in flight; keep the optimistic state.
                     emit { it.copy(status = ConnectionStatus.Connected, error = null) }
                 }
-                if (!refreshed) {
-                    refreshed = true
+                // One-time info + name/permission refresh once connected. Only mark done on SUCCESS, so a
+                // transient failure doesn't permanently strand names/perms; retry no more than once a minute
+                // so a persistent failure can't hammer the device on every tick.
+                if (!refreshed && System.currentTimeMillis() - lastMetaAttemptMs >= META_RETRY_INTERVAL_MS) {
+                    lastMetaAttemptMs = System.currentTimeMillis()
                     runCatching { repo.getInfo() }.onSuccess { info -> emit { it.copy(info = info) } }
-                    runCatching { repo.refreshMetadata() } // fresh names + permissions land in the cache → next poll applies them
-                    lastSnapshotMs = 0L // force the next poll to persist a snapshot with the fresh names
+                    if (runCatching { repo.refreshMetadata() }.isSuccess) {
+                        refreshed = true
+                        lastSnapshotMs = 0L // force the next poll to persist a snapshot with the fresh names
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -521,12 +555,35 @@ class MyioViewModel(
     private val _aggregate = MutableStateFlow(AggregateUiState())
     val aggregate: StateFlow<AggregateUiState> = _aggregate.asStateFlow()
 
-    /** Detected covers per server (id → covers) for the aggregate dashboard — same structural detection
-     * + per-server overrides as the single-server [covers], recomputed as each server polls. */
-    val aggregateCovers: StateFlow<Map<String, List<Cover>>> =
+    // Per-server memo for cover detection: one polled server shouldn't re-run detect for every other
+    // server. detect is pure, so reuse the previous result while a server's (state, overrides) inputs are
+    // the same instances (state gets a new instance only when that server actually polls). Touched only
+    // from viewModelScope collectors (the aggregateCovers combine + stopAggregate's clear), all on the
+    // main dispatcher → no extra synchronization needed.
+    private val coverMemo = mutableMapOf<String, Triple<ServerState, Map<String, CoverOverride>, CoverDetection.Detection>>()
+
+    /** Full cover detection per server (id → Detection) for the aggregate dashboard — same structural
+     * detection + per-server overrides as the single-server path, recomputed as each server polls. */
+    private val aggregateDetection: StateFlow<Map<String, CoverDetection.Detection>> =
         combine(_aggregate, allCoverOverrides) { agg, allOv ->
-            agg.perServer.mapValues { (id, ui) -> CoverDetection.detect(ui.state, allOv[id] ?: emptyMap()) }
+            agg.perServer.mapValues { (id, ui) ->
+                val ov = allOv[id] ?: emptyMap()
+                val cached = coverMemo[id]
+                if (cached != null && cached.first === ui.state && cached.second === ov) cached.third
+                else CoverDetection.detectAll(ui.state, ov).also { coverMemo[id] = Triple(ui.state, ov, it) }
+            }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Detected covers per server (id → covers) for the aggregate dashboard. */
+    val aggregateCovers: StateFlow<Map<String, List<Cover>>> =
+        aggregateDetection.map { m -> m.mapValues { it.value.covers } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Disabled-cover endpoint keys per server (id → coverKey → endpoint output keys) for the aggregate
+     * hidden/zone expansion (see [expandHiddenForDisabledCovers]). */
+    val aggregateDisabledMembers: StateFlow<Map<String, Map<String, List<String>>>> =
+        aggregateDetection.map { m -> m.mapValues { it.value.disabledMembers } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     private var aggregateJobs: List<Job> = emptyList()
     private val aggregateRepos = mutableMapOf<String, MyioRepository>()
@@ -537,19 +594,22 @@ class MyioViewModel(
         viewModelScope.launch {
             settings.selectedId.flatMapLatest { id ->
                 if (id != SettingsStore.AGGREGATE_ID) flowOf(emptyList())
-                else combine(settings.servers, allAssignmentsFlow) { list, amap ->
+                else combine(settings.servers, allAssignments) { list, amap ->
                     list.filter { amap[it.id]?.assignments?.isNotEmpty() == true }
                 }
             }
-                // Restart only when the *set* of relevant servers changes, not on every assignment edit.
-                .distinctUntilChanged { a, b -> a.map { it.id }.toSet() == b.map { it.id }.toSet() }
+                // Restart only when the relevant servers' set OR any of their connection configs change,
+                // not on every assignment edit (name/interval/hidden edits keep the same configs → no restart).
+                .distinctUntilChanged { a, b ->
+                    a.associate { it.id to it.toConfig() } == b.associate { it.id to it.toConfig() }
+                }
                 .collect { relevant ->
                     if (relevant.isEmpty()) stopAggregate() else restartAggregate(relevant)
                 }
         }
     }
 
-    private fun restartAggregate(relevant: List<MyioServer>) {
+    private suspend fun restartAggregate(relevant: List<MyioServer>) {
         stopAggregate()
         _aggregate.value = AggregateUiState(perServer = relevant.associate { it.id to MyioUiState() })
         aggregateJobs = relevant.map { server ->
@@ -563,11 +623,14 @@ class MyioViewModel(
         }
     }
 
-    private fun stopAggregate() {
-        aggregateJobs.forEach { it.cancel() }
+    private suspend fun stopAggregate() {
+        // Join, don't just cancel: wait out each loop's in-flight (blocking) call so a restart never
+        // overlaps a fresh connection to the same device.
+        aggregateJobs.forEach { it.cancelAndJoin() }
         aggregateJobs = emptyList()
         aggregateRepos.clear()
         aggregateGen.clear()
+        coverMemo.clear()
         _aggregate.value = AggregateUiState()
     }
 
@@ -599,7 +662,13 @@ class MyioViewModel(
             pollGeneration++
             _ui.update { it.copy(state = transform(it.state)) }
         }
-        override fun send(vararg bodies: String) = sendOn(repo, bodies)
+        // Capture the current repo at tap time and bind the guard to it: if the selected server is
+        // re-pointed (server switch / config edit) before/while the command fires, [repo] no longer equals
+        // the captured instance → drop the rest, so a command can never land on the wrong device.
+        override fun send(vararg bodies: String) {
+            val captured = repo
+            sendOn(captured, bodies) { captured === repo }
+        }
     }
 
     /** One aggregate server: its [aggregate] slot guarded by [aggregateGen], on its own repo. */
@@ -608,13 +677,26 @@ class MyioViewModel(
             aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1
             updateServer(serverId) { it.copy(state = transform(it.state)) }
         }
-        override fun send(vararg bodies: String) = sendOn(aggregateRepos[serverId], bodies)
+        // Route by server id; guard against an aggregate restart re-pointing this server's repo mid-command.
+        override fun send(vararg bodies: String) {
+            val captured = aggregateRepos[serverId]
+            sendOn(captured, bodies) { aggregateRepos[serverId] === captured }
+        }
     }
 
-    /** Fire-and-forget: POST every body sequentially on one coroutine; the poll loop reconciles. */
-    private fun sendOn(repo: MyioRepository?, bodies: Array<out String>) {
+    /**
+     * Fire-and-forget: POST every body sequentially on one coroutine; the poll loop reconciles. [stillValid]
+     * is re-checked before each POST so a server switch mid-send drops the remaining commands instead of
+     * POSTing them to a now-different device.
+     */
+    private fun sendOn(repo: MyioRepository?, bodies: Array<out String>, stillValid: () -> Boolean) {
         val r = repo ?: return
-        viewModelScope.launch { for (b in bodies) runCatching { r.sendCommand(b) } }
+        viewModelScope.launch {
+            for (b in bodies) {
+                if (!stillValid()) return@launch
+                runCatching { r.sendCommand(b) }
+            }
+        }
     }
 
     // Shared control operations, used by both the single-server and aggregate public handlers below.
@@ -740,6 +822,9 @@ class MyioViewModel(
     fun aggCoverStop(serverId: String, cover: Cover) = aggregateTarget(serverId).coverStop(cover)
 
     companion object {
+        /** Don't retry the one-time metadata fetch more than once a minute while it keeps failing. */
+        private const val META_RETRY_INTERVAL_MS = 60_000L
+
         fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore) = viewModelFactory {
             initializer {
                 MyioViewModel(

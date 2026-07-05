@@ -69,12 +69,14 @@ class MainActivity : ComponentActivity() {
                 val zoneConfig by viewModel.zoneConfig.collectAsStateWithLifecycle()
                 val hideZoned by viewModel.hideZoned.collectAsStateWithLifecycle()
                 val covers by viewModel.covers.collectAsStateWithLifecycle()
+                val disabledCoverMembers by viewModel.disabledCoverMembers.collectAsStateWithLifecycle()
                 // Aggregate ("Otthon (összes)") state: global zones + every polled server's live state.
                 val isAggregate by viewModel.isAggregate.collectAsStateWithLifecycle()
                 val aggregate by viewModel.aggregate.collectAsStateWithLifecycle()
                 val globalZones by viewModel.globalZones.collectAsStateWithLifecycle()
                 val allAssignments by viewModel.allAssignments.collectAsStateWithLifecycle()
                 val aggregateCovers by viewModel.aggregateCovers.collectAsStateWithLifecycle()
+                val aggregateDisabledMembers by viewModel.aggregateDisabledMembers.collectAsStateWithLifecycle()
                 val aggregateCoverActionsFor: (String) -> CoverActions = { serverId ->
                     CoverActions(
                         onOpen = { viewModel.aggCoverOpen(serverId, it) },
@@ -116,6 +118,8 @@ class MainActivity : ComponentActivity() {
                             onSelectTab = viewModel::selectTab,
                             expertMode = expertMode,
                             onToggleOutputHidden = viewModel::toggleOutputHidden,
+                            disabledCoverMembers = disabledCoverMembers,
+                            aggregateDisabledMembers = aggregateDisabledMembers,
                             zoneConfig = zoneConfig,
                             hideZoned = hideZoned,
                             onSetHideZoned = viewModel::setHideZoned,

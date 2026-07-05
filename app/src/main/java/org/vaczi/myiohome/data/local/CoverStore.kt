@@ -7,10 +7,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.vaczi.myiohome.data.model.CoverOverride
 
 private val Context.coversDataStore: DataStore<Preferences> by preferencesDataStore(name = "covers")
@@ -26,19 +25,23 @@ class CoverStore(private val dataStore: DataStore<Preferences>) {
 
     /** One server's overrides, keyed by `coverKey()`. */
     fun overrides(serverId: String): Flow<Map<String, CoverOverride>> =
-        dataStore.data.map { parse(it[key(serverId)]) }
+        dataStore.data.map { it[key(serverId)] }.distinctUntilChanged().map { parse(it) }
 
     suspend fun saveOverrides(serverId: String, value: Map<String, CoverOverride>) {
-        dataStore.edit { it[key(serverId)] = json.encodeToString(value) }
+        dataStore.edit { it[key(serverId)] = StoreJson.encodeToString(value) }
     }
 
-    /** Apply [transform] to one cover's override (creating it if absent), dropping it again if it becomes default. */
+    /**
+     * Apply [transform] to one cover's override (creating it if absent), dropping it again if it becomes
+     * default. Already atomic: it reads the currently-persisted map **inside** the DataStore transaction,
+     * so two quick per-cover edits can't clobber each other.
+     */
     suspend fun edit(serverId: String, coverKey: String, transform: (CoverOverride) -> CoverOverride) {
         dataStore.edit { prefs ->
             val map = parse(prefs[key(serverId)]).toMutableMap()
             val next = transform(map[coverKey] ?: CoverOverride())
             if (next == CoverOverride()) map.remove(coverKey) else map[coverKey] = next
-            prefs[key(serverId)] = json.encodeToString(map)
+            prefs[key(serverId)] = StoreJson.encodeToString(map)
         }
     }
 
@@ -47,7 +50,7 @@ class CoverStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs ->
             prefs.asMap().keys.filter { it.name.startsWith("cover_") }.forEach { prefs.remove(it) }
             for ((serverId, value) in byServer) {
-                prefs[key(serverId)] = json.encodeToString(value)
+                prefs[key(serverId)] = StoreJson.encodeToString(value)
             }
         }
     }
@@ -55,12 +58,7 @@ class CoverStore(private val dataStore: DataStore<Preferences>) {
     private fun key(serverId: String) = stringPreferencesKey("cover_$serverId")
 
     companion object {
-        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
         /** Pure parse — null/blank/corrupt → empty map. Unit-testable without DataStore. */
-        fun parse(blob: String?): Map<String, CoverOverride> {
-            if (blob.isNullOrBlank()) return emptyMap()
-            return runCatching { json.decodeFromString<Map<String, CoverOverride>>(blob) }.getOrDefault(emptyMap())
-        }
+        fun parse(blob: String?): Map<String, CoverOverride> = decodeOrDefault(blob, emptyMap())
     }
 }

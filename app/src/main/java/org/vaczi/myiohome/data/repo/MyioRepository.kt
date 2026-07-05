@@ -1,5 +1,8 @@
 package org.vaczi.myiohome.data.repo
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.model.ServerInfo
 import org.vaczi.myiohome.data.model.ServerState
@@ -18,6 +21,11 @@ import org.vaczi.myiohome.data.net.ServerConfig
  * background. Outputs the logged-in user can't read are dropped on apply (they vanish like on the device's
  * own page); ones they can't write keep [org.vaczi.myiohome.data.model.RelayOutput.writable] = false so
  * the UI locks them. [saveSnapshot] persists a labeled state for the next launch.
+ *
+ * **Concurrency:** the myIO device (W5100, 4 sockets) can't take concurrent TCP connections and a POST
+ * storm freezes it for ~1 minute, so every network call on this repo is serialized on [netMutex] (one
+ * repo = one server), and consecutive POSTs are paced ≥ [POST_COOLDOWN_MS] apart. The pacing delay is
+ * held on a separate [postPaceMutex] (not [netMutex]), so a poll can still slip in during the cooldown.
  */
 class MyioRepository(
     val config: ServerConfig,
@@ -27,22 +35,37 @@ class MyioRepository(
 
     private val client = MyioHttpClient(config)
 
-    @Volatile private var relayNames: Map<Int, String> = emptyMap()
-    @Volatile private var pcaNames: Map<Int, String> = emptyMap()
-    @Volatile private var pwmNames: Map<Int, String> = emptyMap()
-    @Volatile private var sensorNames: Map<Int, String> = emptyMap()
+    // Serializes ALL network I/O for this server (poll / getInfo / refreshMetadata / sendCommand) so no
+    // two connections to the device overlap.
+    private val netMutex = Mutex()
 
-    // turnON/turnOFF (device-configured on/off levels) also live only in the index, so cache them
-    // alongside names and re-apply to the lightweight poll.
-    @Volatile private var pcaTurnOn: Map<Int, Int> = emptyMap()
-    @Volatile private var pcaTurnOff: Map<Int, Int> = emptyMap()
-    @Volatile private var pwmTurnOn: Map<Int, Int> = emptyMap()
-    @Volatile private var pwmTurnOff: Map<Int, Int> = emptyMap()
+    // Serializes pacing among POSTs only (so the ≥1s spacing is accurate under a tap storm) without
+    // blocking a poll during the cooldown wait.
+    private val postPaceMutex = Mutex()
+    @Volatile private var lastPostAtMs = 0L
 
-    // Per-user permissions from the index (sparse: a missing id is unknown → fail open, keep + writable).
-    @Volatile private var relayPerms: Map<Int, Perm> = emptyMap()
-    @Volatile private var pcaPerms: Map<Int, Perm> = emptyMap()
-    @Volatile private var pwmPerms: Map<Int, Perm> = emptyMap()
+    /**
+     * All index/snapshot-derived metadata as one immutable snapshot, replaced atomically. Keeping the maps
+     * in a single @Volatile ref avoids torn reads (half-old/half-new names vs. perms) that separate
+     * per-field volatiles allowed.
+     */
+    private data class CachedMeta(
+        val relayNames: Map<Int, String> = emptyMap(),
+        val pcaNames: Map<Int, String> = emptyMap(),
+        val pwmNames: Map<Int, String> = emptyMap(),
+        val sensorNames: Map<Int, String> = emptyMap(),
+        // turnON/turnOFF (device-configured on/off levels) also live only in the index.
+        val pcaTurnOn: Map<Int, Int> = emptyMap(),
+        val pcaTurnOff: Map<Int, Int> = emptyMap(),
+        val pwmTurnOn: Map<Int, Int> = emptyMap(),
+        val pwmTurnOff: Map<Int, Int> = emptyMap(),
+        // Per-user permissions (sparse: a missing id is unknown → fail open, keep + writable).
+        val relayPerms: Map<Int, Perm> = emptyMap(),
+        val pcaPerms: Map<Int, Perm> = emptyMap(),
+        val pwmPerms: Map<Int, Perm> = emptyMap(),
+    )
+
+    @Volatile private var meta = CachedMeta()
 
     /** Instant (no network): return the cached snapshot and seed name maps so the first poll labels. */
     suspend fun loadCachedSnapshot(): ServerState? {
@@ -57,7 +80,7 @@ class MyioRepository(
     }
 
     /** Server metadata (`/info.json`). */
-    suspend fun getInfo(): ServerInfo = client.getInfo()
+    suspend fun getInfo(): ServerInfo = netMutex.withLock { client.getInfo() }
 
     /**
      * Background refresh: fetch the index page and update the in-memory caches (names, on/off levels,
@@ -65,24 +88,39 @@ class MyioRepository(
      * the former d_sens_out.json + HTTP/0.9 p_desc.xml pair; it also carries PCA names for id > 2100.
      */
     suspend fun refreshMetadata() {
-        val meta = MyioIndexParser.parse(client.getIndex())
-        relayNames = mergeNames(relayNames, meta.relayNames)
-        pcaNames = mergeNames(pcaNames, meta.pcaNames)
-        pwmNames = mergeNames(pwmNames, meta.pwmNames)
-        sensorNames = mergeNames(sensorNames, meta.sensorNames)
-        if (meta.pcaTurnOn.isNotEmpty()) pcaTurnOn = meta.pcaTurnOn
-        if (meta.pcaTurnOff.isNotEmpty()) pcaTurnOff = meta.pcaTurnOff
-        if (meta.pwmTurnOn.isNotEmpty()) pwmTurnOn = meta.pwmTurnOn
-        if (meta.pwmTurnOff.isNotEmpty()) pwmTurnOff = meta.pwmTurnOff
-        if (meta.relayPerms.isNotEmpty()) relayPerms = meta.relayPerms
-        if (meta.pcaPerms.isNotEmpty()) pcaPerms = meta.pcaPerms
-        if (meta.pwmPerms.isNotEmpty()) pwmPerms = meta.pwmPerms
+        val idx = netMutex.withLock { MyioIndexParser.parse(client.getIndex()) }
+        meta = merge(
+            meta,
+            CachedMeta(
+                relayNames = idx.relayNames,
+                pcaNames = idx.pcaNames,
+                pwmNames = idx.pwmNames,
+                sensorNames = idx.sensorNames,
+                pcaTurnOn = idx.pcaTurnOn,
+                pcaTurnOff = idx.pcaTurnOff,
+                pwmTurnOn = idx.pwmTurnOn,
+                pwmTurnOff = idx.pwmTurnOff,
+                relayPerms = idx.relayPerms,
+                pcaPerms = idx.pcaPerms,
+                pwmPerms = idx.pwmPerms,
+            ),
+        )
     }
 
     /** Lightweight state poll with cached names/levels/permissions re-applied. */
-    suspend fun poll(): ServerState = applyCached(client.pollState())
+    suspend fun poll(): ServerState = applyCached(netMutex.withLock { client.pollState() })
 
-    suspend fun sendCommand(body: String) = client.sendCommand(body)
+    /**
+     * POST a control command. Paces consecutive POSTs ≥ [POST_COOLDOWN_MS] apart (the device freezes under
+     * a burst of writes). The wait is on [postPaceMutex], so a concurrent [poll] can still take [netMutex]
+     * during the cooldown; only the actual POST holds [netMutex].
+     */
+    suspend fun sendCommand(body: String) = postPaceMutex.withLock {
+        val wait = POST_COOLDOWN_MS - (System.currentTimeMillis() - lastPostAtMs)
+        if (wait > 0) delay(wait)
+        netMutex.withLock { client.sendCommand(body) }
+        lastPostAtMs = System.currentTimeMillis()
+    }
 
     private fun cacheNames(s: ServerState) {
         // Merge, don't clobber: keep previously cached names for ids whose fresh name is blank or
@@ -90,21 +128,46 @@ class MyioRepository(
         // filled from the flaky HTTP/0.9 /p_desc.xml. Without this merge, a single failed p_desc fetch
         // (or an empty d_sens response) would wipe good names and the affected tiles vanish from the
         // grid (name.isNotBlank() filter) until a later refresh happens to succeed.
-        relayNames = mergeNames(relayNames, s.relays.associate { it.id to it.name })
-        pcaNames = mergeNames(pcaNames, s.pcas.associate { it.id to it.name })
-        pwmNames = mergeNames(pwmNames, s.pwms.associate { it.id to it.name })
-        sensorNames = mergeNames(sensorNames, s.sensors.associate { it.id to it.name })
-        pcaTurnOn = s.pcas.associate { it.id to it.turnOn }
-        pcaTurnOff = s.pcas.associate { it.id to it.turnOff }
-        pwmTurnOn = s.pwms.associate { it.id to it.turnOn }
-        pwmTurnOff = s.pwms.associate { it.id to it.turnOff }
+        //
         // The snapshot only holds outputs the user can read (non-readable ones were dropped before it was
         // saved), so seed permissions as readable, carrying each output's last-known writable flag. This
         // keeps locked tiles locked on the instant cached render, until the fresh index refines them.
-        relayPerms = s.relays.associate { it.id to Perm(readable = true, writable = it.writable) }
-        pcaPerms = s.pcas.associate { it.id to Perm(readable = true, writable = it.writable) }
-        pwmPerms = s.pwms.associate { it.id to Perm(readable = true, writable = it.writable) }
+        meta = merge(
+            meta,
+            CachedMeta(
+                relayNames = s.relays.associate { it.id to it.name },
+                pcaNames = s.pcas.associate { it.id to it.name },
+                pwmNames = s.pwms.associate { it.id to it.name },
+                sensorNames = s.sensors.associate { it.id to it.name },
+                pcaTurnOn = s.pcas.associate { it.id to it.turnOn },
+                pcaTurnOff = s.pcas.associate { it.id to it.turnOff },
+                pwmTurnOn = s.pwms.associate { it.id to it.turnOn },
+                pwmTurnOff = s.pwms.associate { it.id to it.turnOff },
+                relayPerms = s.relays.associate { it.id to Perm(readable = true, writable = it.writable) },
+                pcaPerms = s.pcas.associate { it.id to Perm(readable = true, writable = it.writable) },
+                pwmPerms = s.pwms.associate { it.id to Perm(readable = true, writable = it.writable) },
+            ),
+        )
     }
+
+    /**
+     * Merge [fresh] onto [old] with the established policy: names overlay (a blank/missing fresh name never
+     * replaces an existing one); levels + permissions replace wholesale but only when [fresh] carries them
+     * (an empty fresh map — parse miss / older fw — keeps the previous values rather than wiping them).
+     */
+    private fun merge(old: CachedMeta, fresh: CachedMeta): CachedMeta = CachedMeta(
+        relayNames = mergeNames(old.relayNames, fresh.relayNames),
+        pcaNames = mergeNames(old.pcaNames, fresh.pcaNames),
+        pwmNames = mergeNames(old.pwmNames, fresh.pwmNames),
+        sensorNames = mergeNames(old.sensorNames, fresh.sensorNames),
+        pcaTurnOn = fresh.pcaTurnOn.ifEmpty { old.pcaTurnOn },
+        pcaTurnOff = fresh.pcaTurnOff.ifEmpty { old.pcaTurnOff },
+        pwmTurnOn = fresh.pwmTurnOn.ifEmpty { old.pwmTurnOn },
+        pwmTurnOff = fresh.pwmTurnOff.ifEmpty { old.pwmTurnOff },
+        relayPerms = fresh.relayPerms.ifEmpty { old.relayPerms },
+        pcaPerms = fresh.pcaPerms.ifEmpty { old.pcaPerms },
+        pwmPerms = fresh.pwmPerms.ifEmpty { old.pwmPerms },
+    )
 
     /** Overlay [fresh] onto [old], but never replace an existing name with a blank/missing one. */
     private fun mergeNames(old: Map<Int, String>, fresh: Map<Int, String>): Map<Int, String> =
@@ -115,32 +178,40 @@ class MyioRepository(
      * [writable] flag, and drop outputs the user has no read permission for (a known-unreadable id),
      * mirroring the device's own page. A missing permission entry is "unknown" → kept and writable.
      */
-    private fun applyCached(s: ServerState): ServerState = s.copy(
-        relays = s.relays.mapNotNull { r ->
-            val perm = relayPerms[r.id]
-            if (perm?.readable == false) null
-            else r.copy(name = relayNames[r.id] ?: r.name, writable = perm?.writable ?: true)
-        },
-        pcas = s.pcas.mapNotNull { p ->
-            val perm = pcaPerms[p.id]
-            if (perm?.readable == false) null
-            else p.copy(
-                name = pcaNames[p.id] ?: p.name,
-                turnOn = pcaTurnOn[p.id] ?: p.turnOn,
-                turnOff = pcaTurnOff[p.id] ?: p.turnOff,
-                writable = perm?.writable ?: true,
-            )
-        },
-        pwms = s.pwms.mapNotNull { w ->
-            val perm = pwmPerms[w.id]
-            if (perm?.readable == false) null
-            else w.copy(
-                name = pwmNames[w.id] ?: w.name,
-                turnOn = pwmTurnOn[w.id] ?: w.turnOn,
-                turnOff = pwmTurnOff[w.id] ?: w.turnOff,
-                writable = perm?.writable ?: true,
-            )
-        },
-        sensors = s.sensors.map { it.copy(name = sensorNames[it.id] ?: it.name) },
-    )
+    private fun applyCached(s: ServerState): ServerState {
+        val m = meta
+        return s.copy(
+            relays = s.relays.mapNotNull { r ->
+                val perm = m.relayPerms[r.id]
+                if (perm?.readable == false) null
+                else r.copy(name = m.relayNames[r.id] ?: r.name, writable = perm?.writable ?: true)
+            },
+            pcas = s.pcas.mapNotNull { p ->
+                val perm = m.pcaPerms[p.id]
+                if (perm?.readable == false) null
+                else p.copy(
+                    name = m.pcaNames[p.id] ?: p.name,
+                    turnOn = m.pcaTurnOn[p.id] ?: p.turnOn,
+                    turnOff = m.pcaTurnOff[p.id] ?: p.turnOff,
+                    writable = perm?.writable ?: true,
+                )
+            },
+            pwms = s.pwms.mapNotNull { w ->
+                val perm = m.pwmPerms[w.id]
+                if (perm?.readable == false) null
+                else w.copy(
+                    name = m.pwmNames[w.id] ?: w.name,
+                    turnOn = m.pwmTurnOn[w.id] ?: w.turnOn,
+                    turnOff = m.pwmTurnOff[w.id] ?: w.turnOff,
+                    writable = perm?.writable ?: true,
+                )
+            },
+            sensors = s.sensors.map { it.copy(name = m.sensorNames[it.id] ?: it.name) },
+        )
+    }
+
+    companion object {
+        /** Minimum spacing between consecutive POSTs (the device freezes under a burst of writes). */
+        private const val POST_COOLDOWN_MS = 1_000L
+    }
 }

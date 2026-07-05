@@ -10,11 +10,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.vaczi.myiohome.data.net.ServerConfig
 
 /**
@@ -88,10 +87,13 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
 
     constructor(context: Context) : this(context.dataStore)
 
-    val servers: Flow<List<MyioServer>> = dataStore.data.map { parseServers(it[SERVERS]) }
+    // distinctUntilChanged on the raw blob so unrelated writes (a tab switch, theme, selection — all
+    // separate keys in the same Preferences file) don't force a re-decode + downstream recomposition.
+    val servers: Flow<List<MyioServer>> =
+        dataStore.data.map { it[SERVERS] }.distinctUntilChanged().map { parseServers(it) }
 
     /** The raw selected id (may be a server id or the [AGGREGATE_ID] sentinel; null if never set). */
-    val selectedId: Flow<String?> = dataStore.data.map { it[SELECTED] }
+    val selectedId: Flow<String?> = dataStore.data.map { it[SELECTED] }.distinctUntilChanged()
 
     /**
      * The selected **real** server (matched by id); first slot as fallback, or null when there are no
@@ -112,34 +114,60 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
     }
 
     /** The selected app theme (defaults to [AppTheme.GREEN] — the original greenish look). */
-    val theme: Flow<AppTheme> = dataStore.data.map { parseTheme(it[THEME]) }
+    val theme: Flow<AppTheme> = dataStore.data.map { it[THEME] }.distinctUntilChanged().map { parseTheme(it) }
 
     suspend fun setTheme(value: AppTheme) {
         dataStore.edit { it[THEME] = value.name }
     }
 
     /**
-     * Expert mode (defaults to **true** → existing behaviour unchanged). When false the app shows a
+     * Expert mode (defaults to **false** → the locked, simplified view). When false the app shows a
      * locked, simplified view: servers/outputs marked hidden are filtered from display, and the
-     * per-server editing tools (zone assign / reorder / visibility) are hidden.
+     * per-server editing tools (zone assign / reorder / visibility) are hidden. Expert mode (true)
+     * unlocks full visibility + those editing tools.
      */
-    val expertMode: Flow<Boolean> = dataStore.data.map { it[EXPERT] ?: false }
+    val expertMode: Flow<Boolean> = dataStore.data.map { it[EXPERT] ?: false }.distinctUntilChanged()
 
     suspend fun setExpertMode(value: Boolean) {
         dataStore.edit { it[EXPERT] = value }
     }
 
-    /** Last-open tab index for a server (defaults to 0). */
-    fun lastTab(serverId: String): Flow<Int> = dataStore.data.map { it[tabKey(serverId)] ?: 0 }
+    /**
+     * Last-open tab for a server, as a **stable tab name** (null if never set). Stored by name rather
+     * than by the tab's enum ordinal so that inserting/reordering tabs in the UI can't silently shift a
+     * saved selection onto a different tab. Legacy installs stored a raw ordinal [Int] under the old key;
+     * that's surfaced here as its decimal string and the caller migrates it once via [resolveTab] (the
+     * current enum order), after which [setLastTab] rewrites it as a name and drops the legacy key.
+     */
+    fun lastTab(serverId: String): Flow<String?> =
+        dataStore.data
+            .map { it[tabNameKey(serverId)] ?: it[tabOrdinalKey(serverId)]?.toString() }
+            .distinctUntilChanged()
 
-    suspend fun setLastTab(serverId: String, index: Int) {
-        dataStore.edit { it[tabKey(serverId)] = index }
+    suspend fun setLastTab(serverId: String, tabName: String) {
+        dataStore.edit {
+            it[tabNameKey(serverId)] = tabName
+            it.remove(tabOrdinalKey(serverId)) // migrated → drop the legacy ordinal so it can't resurface
+        }
     }
 
-    private fun tabKey(serverId: String) = intPreferencesKey("tab_$serverId")
+    private fun tabNameKey(serverId: String) = stringPreferencesKey("tabname_$serverId")
+    private fun tabOrdinalKey(serverId: String) = intPreferencesKey("tab_$serverId")
 
+    /** Full-replace write of the whole server list (used by import). For in-place mutations that must not
+     * lose a concurrent edit, prefer [updateServers] (transform read+written atomically inside `edit`). */
     suspend fun saveServers(list: List<MyioServer>) {
-        dataStore.edit { it[SERVERS] = json.encodeToString(list) }
+        dataStore.edit { it[SERVERS] = StoreJson.encodeToString(list) }
+    }
+
+    /**
+     * Atomically read-modify-write the server list: [transform] runs **inside** the DataStore transaction
+     * on the freshly-decoded persisted value, so two quick edits can't clobber each other (the earlier one
+     * is no longer read from a stale StateFlow snapshot). All in-place mutations (hide toggle, reorder,
+     * upsert, delete) go through this.
+     */
+    suspend fun updateServers(transform: (List<MyioServer>) -> List<MyioServer>) {
+        dataStore.edit { it[SERVERS] = StoreJson.encodeToString(transform(parseServers(it[SERVERS]))) }
     }
 
     companion object {
@@ -150,8 +178,6 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */
         const val AGGREGATE_ID = "__all_zones__"
-        // encodeDefaults so the (randomly-defaulted) id is always written back, not skipped.
-        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
         /**
          * Pure parse — unit-testable without DataStore. Discovery-first: a fresh install / cleared
@@ -159,13 +185,21 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
          * and the user adds slots by scanning the LAN or by hand. So an absent (null/blank) or corrupt
          * blob → empty list, as does an explicit `"[]"`.
          */
-        fun parseServers(blob: String?): List<MyioServer> {
-            if (blob.isNullOrBlank()) return emptyList()
-            return runCatching { json.decodeFromString<List<MyioServer>>(blob) }.getOrDefault(emptyList())
-        }
+        fun parseServers(blob: String?): List<MyioServer> = decodeOrDefault(blob, emptyList())
 
         /** Pure parse with fallback — unknown/missing names default to [AppTheme.GREEN]. */
         fun parseTheme(name: String?): AppTheme =
             runCatching { AppTheme.valueOf(name ?: "") }.getOrDefault(AppTheme.GREEN)
+
+        /**
+         * Resolve a persisted tab identifier ([stored]) against [order] — the current tab names in enum
+         * order. A new-format name resolves directly; a legacy ordinal (decimal string) is mapped through
+         * [order] once; anything matching nothing (a removed/renamed tab) → null. Pure — unit-testable.
+         */
+        fun resolveTab(stored: String?, order: List<String>): String? {
+            if (stored.isNullOrBlank()) return null
+            if (stored in order) return stored
+            return stored.toIntOrNull()?.let { order.getOrNull(it) }
+        }
     }
 }

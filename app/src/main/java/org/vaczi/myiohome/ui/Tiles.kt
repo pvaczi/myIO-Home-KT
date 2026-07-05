@@ -52,6 +52,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -384,7 +385,10 @@ private fun DimmableLampTile(
     onSet: (Int) -> Unit,
 ) {
     var dragging by remember { mutableStateOf(false) }
-    var pos by remember(state) { mutableFloatStateOf(state.toFloat()) }
+    var pos by remember { mutableFloatStateOf(state.toFloat()) }
+    // Sync the local drag position to the polled state, but only while not actively dragging — otherwise
+    // a poll landing mid-drag would yank the thumb out from under the user's finger.
+    LaunchedEffect(state) { if (!dragging) pos = state.toFloat() }
     val shownState = if (dragging) pos.roundToInt() else state
     val on = shownState != 0
     Surface(
@@ -559,7 +563,7 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
 
 /** Small padlock shown on a tile the logged-in user may see but not control (no write permission). */
 @Composable
-private fun LockBadge() {
+internal fun LockBadge() {
     Icon(
         Icons.Filled.Lock,
         contentDescription = "Csak megtekintés (nincs vezérlési jog)",

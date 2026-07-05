@@ -70,8 +70,9 @@ class MyioDiscovery(
         Socket().use { sock ->
             sock.connect(InetSocketAddress(host, httpPort), connectTimeoutMs)
             sock.soTimeout = 2_500
+            // ISO-8859-1 (OkHttp's Credentials.basic default): US_ASCII silently maps non-ASCII to '?'.
             val auth = "Basic " + Base64.encodeToString(
-                "$user:$password".toByteArray(Charsets.US_ASCII), Base64.NO_WRAP,
+                "$user:$password".toByteArray(Charsets.ISO_8859_1), Base64.NO_WRAP,
             )
             val req = "GET / HTTP/1.0\r\nHost: $host\r\n" +
                 "Authorization: $auth\r\nConnection: close\r\n\r\n"

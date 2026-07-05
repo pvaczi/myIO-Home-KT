@@ -78,12 +78,18 @@ object MyioIndexParser {
     /** 5-digit PCA/FET code `RWVVV`: readable = ten-thousands set, writable = thousands set. */
     private fun perm5(v: Int) = Perm(readable = v / 10000 != 0, writable = (v / 1000) % 10 != 0)
 
-    /** `var <name>=[1,2,3];` → the int list (empty if the variable is absent or non-numeric). */
+    /**
+     * `var <name>=[1,2,3];` → the int list (empty if the variable is absent). Position-preserving: a
+     * non-numeric element becomes `0` rather than being dropped, so later elements keep their correct
+     * array index (and thus id). `0` is also the firmware's own "no rights" code, so this is a safe
+     * fail-closed default for that slot rather than a fail-open shift of every id after it.
+     */
     private fun intArray(index: String, name: String): List<Int> {
         val body = Regex("var\\s+${Regex.escape(name)}\\s*=\\s*\\[([^\\]]*)\\]").find(index)
-            ?.groupValues?.get(1) ?: return emptyList()
+            ?.groupValues?.get(1)?.trim() ?: return emptyList()
+        if (body.isEmpty()) return emptyList()
         return body.split(',')
-            .mapNotNull { it.trim().toIntOrNull() }
+            .map { it.trim().toIntOrNull() ?: 0 }
     }
 
     /** Map array position → id via [idOf], dropping the unused 0-based index. */

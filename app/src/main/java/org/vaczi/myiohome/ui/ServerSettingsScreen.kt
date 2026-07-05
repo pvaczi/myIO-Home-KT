@@ -205,29 +205,17 @@ private fun DiscoveryDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                ExposedDropdownMenuBox(
+                SubnetDropdown(
+                    candidates = subnetCandidates,
                     expanded = subnetMenuOpen,
-                    onExpandedChange = { if (!state.running) subnetMenuOpen = it },
-                ) {
-                    OutlinedTextField(
-                        value = subnet,
-                        onValueChange = { subnet = it },
-                        label = { Text("Alháló (első 3 oktett)") },
-                        placeholder = { Text("192.168.1") },
-                        singleLine = true,
-                        enabled = !state.running,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = subnetMenuOpen) },
-                        modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable).fillMaxWidth(),
-                    )
-                    ExposedDropdownMenu(expanded = subnetMenuOpen, onDismissRequest = { subnetMenuOpen = false }) {
-                        subnetCandidates.forEach { candidate ->
-                            DropdownMenuItem(
-                                text = { Text("$candidate.x") },
-                                onClick = { subnet = candidate; subnetMenuOpen = false },
-                            )
-                        }
-                    }
-                }
+                    onExpandedChange = { subnetMenuOpen = it },
+                    label = "Alháló (első 3 oktett)",
+                    value = subnet,
+                    onValueChange = { subnet = it },
+                    editable = true,
+                    enabled = !state.running,
+                    onPick = { subnet = it },
+                )
                 OutlinedTextField(user, { user = it }, label = { Text("Felhasználó") }, singleLine = true, enabled = !state.running)
                 OutlinedTextField(password, { password = it }, label = { Text("Jelszó") }, singleLine = true, enabled = !state.running)
 
@@ -279,6 +267,52 @@ private fun DiscoveryDialog(
     )
 }
 
+/**
+ * /24-subnet picker shared by the discovery dialog (editable, typed value drives the scan) and the
+ * server editor (read-only, picking a candidate only fills in the host field's prefix). [editable]
+ * switches between the two text-field modes; [onPick] fires when a candidate is chosen from the menu.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SubnetDropdown(
+    candidates: List<String>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    editable: Boolean,
+    enabled: Boolean = true,
+    onPick: (String) -> Unit,
+) {
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) onExpandedChange(it) },
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            readOnly = !editable,
+            label = { Text(label) },
+            placeholder = { Text(if (editable) "192.168.1" else "válassz…") },
+            singleLine = true,
+            enabled = enabled,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor(
+                if (editable) MenuAnchorType.PrimaryEditable else MenuAnchorType.PrimaryNotEditable,
+            ).fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            candidates.forEach { candidate ->
+                DropdownMenuItem(
+                    text = { Text("$candidate.x") },
+                    onClick = { onPick(candidate); onExpandedChange(false) },
+                )
+            }
+        }
+    }
+}
+
 /** Wrapper so a closed dialog (null) is distinct from "add new" (Editing(server = null)). */
 private data class Editing(val server: MyioServer?)
 
@@ -319,32 +353,17 @@ private fun ServerEditDialog(
             ) {
                 OutlinedTextField(name, { name = it }, label = { Text("Név") }, singleLine = true)
                 if (subnetCandidates.isNotEmpty()) {
-                    ExposedDropdownMenuBox(
+                    SubnetDropdown(
+                        candidates = subnetCandidates,
                         expanded = prefixMenuOpen,
                         onExpandedChange = { prefixMenuOpen = it },
-                    ) {
-                        OutlinedTextField(
-                            value = "",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("/24 tartomány (gyorskitöltés)") },
-                            placeholder = { Text("válassz…") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = prefixMenuOpen) },
-                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-                        )
-                        ExposedDropdownMenu(expanded = prefixMenuOpen, onDismissRequest = { prefixMenuOpen = false }) {
-                            subnetCandidates.forEach { candidate ->
-                                DropdownMenuItem(
-                                    text = { Text("$candidate.x") },
-                                    // Keep the last octet if already typed; otherwise just set the prefix.
-                                    onClick = {
-                                        host = "$candidate.${host.substringAfterLast('.', "")}"
-                                        prefixMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
-                    }
+                        label = "/24 tartomány (gyorskitöltés)",
+                        value = "",
+                        onValueChange = {},
+                        editable = false,
+                        // Keep the last octet if already typed; otherwise just set the prefix.
+                        onPick = { candidate -> host = "$candidate.${host.substringAfterLast('.', "")}" },
+                    )
                 }
                 OutlinedTextField(host, { host = it }, label = { Text("IP / host") }, singleLine = true)
                 OutlinedTextField(
