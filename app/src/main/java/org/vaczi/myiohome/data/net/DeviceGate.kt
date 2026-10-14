@@ -11,6 +11,10 @@ import java.util.concurrent.ConcurrentHashMap
  * two slots may share a host, and discovery's name lookup hits port 80 of devices that are being polled.
  * A per-repository lock covers none of these, so every connection to a device goes through the one gate
  * of its host:port.
+ *
+ * Keyed by the host *string*: a device reached by hostname in one slot and by IP in another gets two
+ * gates. Accepted — discovery and the usual setup use the IP; resolving names here would add DNS to
+ * every connection.
  */
 class DeviceGate private constructor() {
 
