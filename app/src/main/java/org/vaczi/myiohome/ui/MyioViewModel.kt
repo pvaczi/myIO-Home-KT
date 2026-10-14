@@ -349,6 +349,16 @@ class MyioViewModel(
      */
     private var pollGeneration = 0
 
+    /**
+     * Commands still on their way to the device, per control target ([SINGLE_TARGET] or an aggregate
+     * server id). A poll that completes while one is pending may have read the device before the paced
+     * POST landed, so its state is dropped too; the generation is bumped again once the command finishes.
+     * Touched only on the main dispatcher (viewModelScope).
+     */
+    private val pendingSends = mutableMapOf<String, Int>()
+
+    private fun isSending(key: String): Boolean = (pendingSends[key] ?: 0) > 0
+
     @Volatile private var repo: MyioRepository? = null
     private var pollJob: Job? = null
     private var activeId: String? = null
@@ -485,12 +495,15 @@ class MyioViewModel(
 
     private suspend fun pollLoop(serverId: String) {
         val repo = repo ?: return
-        runPollLoop(repo, serverId, currentGen = { pollGeneration }) { transform -> _ui.update(transform) }
+        runPollLoop(repo, serverId, currentGen = { pollGeneration }, sending = { isSending(SINGLE_TARGET) }) {
+            transform -> _ui.update(transform)
+        }
     }
 
     /**
      * One server's poll loop, parameterized so the single-server and aggregate paths share it.
-     * [currentGen] reads the relevant generation counter (to drop polls predating a command); [emit]
+     * [currentGen] reads the relevant generation counter (to drop polls predating a command); [sending]
+     * tells whether a command of this target is still in flight (its poll result is dropped too); [emit]
      * applies a transform to the relevant [MyioUiState] slot.
      *
      * Instant first: render the cached snapshot (still "Connecting", controls disabled) and seed the
@@ -502,6 +515,7 @@ class MyioViewModel(
         repo: MyioRepository,
         serverId: String,
         currentGen: () -> Int,
+        sending: () -> Boolean,
         emit: (transform: (MyioUiState) -> MyioUiState) -> Unit,
     ) {
         runCatching { repo.loadCachedSnapshot() }.getOrNull()?.let { snapshot ->
@@ -515,7 +529,7 @@ class MyioViewModel(
             try {
                 val gen = currentGen()
                 val state = repo.poll()
-                if (gen == currentGen()) {
+                if (gen == currentGen() && !sending()) {
                     emit { it.copy(status = ConnectionStatus.Connected, state = state, error = null) }
                     val now = System.currentTimeMillis()
                     if (now - lastSnapshotMs > snapshotSaveIntervalMs) {
@@ -523,7 +537,8 @@ class MyioViewModel(
                         runCatching { repo.saveSnapshot(state) }
                     }
                 } else {
-                    // A command landed while this poll was in flight; keep the optimistic state.
+                    // A command landed (or is still pending) while this poll was in flight; keep the
+                    // optimistic state.
                     emit { it.copy(status = ConnectionStatus.Connected, error = null) }
                 }
                 // One-time info + name/permission refresh once connected. Only mark done on SUCCESS, so a
@@ -616,7 +631,11 @@ class MyioViewModel(
             val repo = repoFactory(server)
             aggregateRepos[server.id] = repo
             viewModelScope.launch {
-                runPollLoop(repo, server.id, currentGen = { aggregateGen[server.id] ?: 0 }) { transform ->
+                runPollLoop(
+                    repo, server.id,
+                    currentGen = { aggregateGen[server.id] ?: 0 },
+                    sending = { isSending(server.id) },
+                ) { transform ->
                     updateServer(server.id, transform)
                 }
             }
@@ -667,7 +686,7 @@ class MyioViewModel(
         // the captured instance → drop the rest, so a command can never land on the wrong device.
         override fun send(vararg bodies: String) {
             val captured = repo
-            sendOn(captured, bodies) { captured === repo }
+            sendOn(captured, bodies, SINGLE_TARGET, bumpGen = { pollGeneration++ }) { captured === repo }
         }
     }
 
@@ -680,7 +699,9 @@ class MyioViewModel(
         // Route by server id; guard against an aggregate restart re-pointing this server's repo mid-command.
         override fun send(vararg bodies: String) {
             val captured = aggregateRepos[serverId]
-            sendOn(captured, bodies) { aggregateRepos[serverId] === captured }
+            sendOn(captured, bodies, serverId, bumpGen = { aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1 }) {
+                aggregateRepos[serverId] === captured
+            }
         }
     }
 
@@ -689,19 +710,34 @@ class MyioViewModel(
      * is re-checked before each POST so a server switch mid-send drops the remaining commands instead of
      * POSTing them to a now-different device. The first failed POST ends the sequence: a later body
      * assumes the earlier one landed (e.g. a thermostat on/off threshold pair).
+     *
+     * While the sequence runs, [pendingKey] counts as sending (see [pendingSends]); when it ends,
+     * [bumpGen] invalidates any poll that started before the last POST landed.
      */
-    private fun sendOn(repo: MyioRepository?, bodies: Array<out String>, stillValid: () -> Boolean) {
+    private fun sendOn(
+        repo: MyioRepository?,
+        bodies: Array<out String>,
+        pendingKey: String,
+        bumpGen: () -> Unit,
+        stillValid: () -> Boolean,
+    ) {
         val r = repo ?: return
+        pendingSends[pendingKey] = (pendingSends[pendingKey] ?: 0) + 1
         viewModelScope.launch {
-            for (b in bodies) {
-                if (!stillValid()) return@launch
-                try {
-                    r.sendCommand(b)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    return@launch
+            try {
+                for (b in bodies) {
+                    if (!stillValid()) return@launch
+                    try {
+                        r.sendCommand(b)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        return@launch
+                    }
                 }
+            } finally {
+                bumpGen()
+                pendingSends[pendingKey] = (pendingSends[pendingKey] ?: 1) - 1
             }
         }
     }
@@ -831,6 +867,9 @@ class MyioViewModel(
     companion object {
         /** Don't retry the one-time metadata fetch more than once a minute while it keeps failing. */
         private const val META_RETRY_INTERVAL_MS = 60_000L
+
+        /** [pendingSends] key of the single-server target (aggregate targets use the server id). */
+        private const val SINGLE_TARGET = ""
 
         fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore) = viewModelFactory {
             initializer {
