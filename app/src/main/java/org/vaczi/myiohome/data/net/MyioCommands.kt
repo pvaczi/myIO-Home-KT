@@ -48,7 +48,9 @@ object MyioCommands {
     fun pcaThermostatOff(id: Int, tenths: Int): String = "PCA_temp_MAX*${pcaIndex(id)}=$tenths"
 
     // --- Cover (shutter) motor control (mirrors the bridge): always turn the opposite direction OFF first,
-    // then the wanted direction ON, so the protection pair can't deadlock. Sent sequentially. -----------
+    // then the wanted direction ON, so the protection pair can't deadlock. Both parts go out as ONE POST
+    // body joined by '&' (the device applies the parameters in order): two separate POSTs could interleave
+    // with a following command, leave the ON running after a failed OFF, or delay a STOP by the pacing gap.
 
     private fun on(type: CoverOutputType, id: Int) =
         if (type == CoverOutputType.PCA) pcaOnOff(id, true) else relay(id, true)
@@ -56,14 +58,14 @@ object MyioCommands {
         if (type == CoverOutputType.PCA) pcaOnOff(id, false) else relay(id, false)
 
     /** OPEN/up: stop the down direction, drive up. */
-    fun coverOpen(type: CoverOutputType, upId: Int, downId: Int): List<String> =
-        listOf(off(type, downId), on(type, upId))
+    fun coverOpen(type: CoverOutputType, upId: Int, downId: Int): String =
+        "${off(type, downId)}&${on(type, upId)}"
 
     /** CLOSE/down: stop the up direction, drive down. */
-    fun coverClose(type: CoverOutputType, upId: Int, downId: Int): List<String> =
-        listOf(off(type, upId), on(type, downId))
+    fun coverClose(type: CoverOutputType, upId: Int, downId: Int): String =
+        "${off(type, upId)}&${on(type, downId)}"
 
     /** STOP: both directions off. */
-    fun coverStop(type: CoverOutputType, upId: Int, downId: Int): List<String> =
-        listOf(off(type, upId), off(type, downId))
+    fun coverStop(type: CoverOutputType, upId: Int, downId: Int): String =
+        "${off(type, upId)}&${off(type, downId)}"
 }

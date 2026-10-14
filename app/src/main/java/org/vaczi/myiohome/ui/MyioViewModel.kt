@@ -785,17 +785,17 @@ class MyioViewModel(
 
     private fun ControlTarget.coverOpen(c: Cover) {
         optimistic { it.driveCover(c, up = true, down = false) }
-        send(*MyioCommands.coverOpen(c.type, c.upId, c.downId).toTypedArray())
+        send(MyioCommands.coverOpen(c.type, c.upId, c.downId))
     }
 
     private fun ControlTarget.coverClose(c: Cover) {
         optimistic { it.driveCover(c, up = false, down = true) }
-        send(*MyioCommands.coverClose(c.type, c.upId, c.downId).toTypedArray())
+        send(MyioCommands.coverClose(c.type, c.upId, c.downId))
     }
 
     private fun ControlTarget.coverStop(c: Cover) {
         optimistic { it.driveCover(c, up = false, down = false) }
-        send(*MyioCommands.coverStop(c.type, c.upId, c.downId).toTypedArray())
+        send(MyioCommands.coverStop(c.type, c.upId, c.downId))
     }
 
     // Public single-server handlers (MainActivity wires these to the UI callbacks).

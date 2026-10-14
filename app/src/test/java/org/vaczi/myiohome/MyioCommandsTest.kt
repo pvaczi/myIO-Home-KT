@@ -52,10 +52,11 @@ class MyioCommandsTest {
     @Test
     fun coverDrivesOppositeOffThenWantedOn() {
         // PCA cover, up=2002 down=2001: OPEN stops down then drives up; CLOSE the reverse; STOP both off.
-        assertEquals(listOf("PCA_OFF=2001", "PCA_ON=2002"), MyioCommands.coverOpen(CoverOutputType.PCA, 2002, 2001))
-        assertEquals(listOf("PCA_OFF=2002", "PCA_ON=2001"), MyioCommands.coverClose(CoverOutputType.PCA, 2002, 2001))
-        assertEquals(listOf("PCA_OFF=2002", "PCA_OFF=2001"), MyioCommands.coverStop(CoverOutputType.PCA, 2002, 2001))
+        // One POST body each (same as the bridge), so the pair can't be split or interleaved.
+        assertEquals("PCA_OFF=2001&PCA_ON=2002", MyioCommands.coverOpen(CoverOutputType.PCA, 2002, 2001))
+        assertEquals("PCA_OFF=2002&PCA_ON=2001", MyioCommands.coverClose(CoverOutputType.PCA, 2002, 2001))
+        assertEquals("PCA_OFF=2002&PCA_OFF=2001", MyioCommands.coverStop(CoverOutputType.PCA, 2002, 2001))
         // Relay variant uses r_ON / r_OFF.
-        assertEquals(listOf("r_OFF=4", "r_ON=3"), MyioCommands.coverOpen(CoverOutputType.RELAY, 3, 4))
+        assertEquals("r_OFF=4&r_ON=3", MyioCommands.coverOpen(CoverOutputType.RELAY, 3, 4))
     }
 }
