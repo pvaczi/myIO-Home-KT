@@ -168,9 +168,13 @@ class MyioViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
-    /** The selected server's assignment, derived from [allAssignments] (no extra store subscription). */
+    /**
+     * The selected server's assignment, derived from [allAssignments] (no extra store subscription). Keyed
+     * on the *effective* selected server (incl. the first-slot fallback), the same id edits are written
+     * under — the raw selected id may be unset or stale.
+     */
     private val selectedAssignments: StateFlow<ZoneAssignments> =
-        combine(settings.selectedId, allAssignments) { id, all -> id?.let { all[it] } ?: ZoneAssignments() }
+        combine(settings.selected, allAssignments) { s, all -> s?.let { all[it.id] } ?: ZoneAssignments() }
             .stateIn(viewModelScope, SharingStarted.Eagerly, ZoneAssignments())
 
     /** Combined zone view for the selected server's UI (global zones + that server's assignment). */
@@ -189,9 +193,10 @@ class MyioViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
-    /** The selected server's cover overrides, derived from [allCoverOverrides] (no extra subscription). */
+    /** The selected server's cover overrides, derived from [allCoverOverrides] (no extra subscription); keyed
+     * on the effective selected server like [selectedAssignments]. */
     private val selectedCoverOverrides: StateFlow<Map<String, CoverOverride>> =
-        combine(settings.selectedId, allCoverOverrides) { id, all -> id?.let { all[it] } ?: emptyMap() }
+        combine(settings.selected, allCoverOverrides) { s, all -> s?.let { all[it.id] } ?: emptyMap() }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /** Full detection for the selected server (active covers + disabled-pair members), recomputed on each poll. */
