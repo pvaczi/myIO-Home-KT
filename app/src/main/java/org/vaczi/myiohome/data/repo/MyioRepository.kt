@@ -115,11 +115,16 @@ class MyioRepository(
     suspend fun sendCommand(body: String) = gate.postPace.withLock {
         val wait = POST_COOLDOWN_MS - (System.currentTimeMillis() - gate.lastPostAtMs)
         if (wait > 0) delay(wait)
+        var attempted = false
         try {
-            netMutex.withLock { client.sendCommand(body) }
+            netMutex.withLock {
+                attempted = true
+                client.sendCommand(body)
+            }
         } finally {
-            // A failed POST (fast HTTP error, timeout) still hit the device → it counts for the pacing too.
-            gate.lastPostAtMs = System.currentTimeMillis()
+            // A failed POST (fast HTTP error, timeout) still hit the device → it counts for the pacing too;
+            // one cancelled while still waiting for the lock never reached it → it doesn't.
+            if (attempted) gate.lastPostAtMs = System.currentTimeMillis()
         }
     }
 
