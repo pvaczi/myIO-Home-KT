@@ -320,15 +320,17 @@ class MyioViewModel(
         discoveryJob = viewModelScope.launch {
             val found = try {
                 discovery.scan(subnet, user, password) { done, total ->
-                    if (discoveryRun == run) _discoveryState.update { it.copy(done = done, total = total) }
+                    // Check inside update: its CAS retries if a restart/reset swaps the state meanwhile, and
+                    // those bump discoveryRun first, so a superseded run can never write into the new state.
+                    _discoveryState.update { if (discoveryRun == run) it.copy(done = done, total = total) else it }
                 }
             } catch (e: CancellationException) {
                 throw e // superseded or reset: the newer run owns the state
             } catch (e: Exception) {
                 null
             }
-            if (discoveryRun == run) {
-                _discoveryState.update { it.copy(running = false, finished = true, results = found ?: it.results) }
+            _discoveryState.update {
+                if (discoveryRun == run) it.copy(running = false, finished = true, results = found ?: it.results) else it
             }
         }
     }
