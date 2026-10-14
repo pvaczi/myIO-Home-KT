@@ -687,14 +687,21 @@ class MyioViewModel(
     /**
      * Fire-and-forget: POST every body sequentially on one coroutine; the poll loop reconciles. [stillValid]
      * is re-checked before each POST so a server switch mid-send drops the remaining commands instead of
-     * POSTing them to a now-different device.
+     * POSTing them to a now-different device. The first failed POST ends the sequence: a later body
+     * assumes the earlier one landed (e.g. a thermostat on/off threshold pair).
      */
     private fun sendOn(repo: MyioRepository?, bodies: Array<out String>, stillValid: () -> Boolean) {
         val r = repo ?: return
         viewModelScope.launch {
             for (b in bodies) {
                 if (!stillValid()) return@launch
-                runCatching { r.sendCommand(b) }
+                try {
+                    r.sendCommand(b)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    return@launch
+                }
             }
         }
     }
