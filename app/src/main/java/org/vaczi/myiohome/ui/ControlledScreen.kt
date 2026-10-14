@@ -146,19 +146,22 @@ private fun ThermostatDialog(
     val isHumidity = sensor.kind == SensorKind.HUMIDITY
     // on <= off → heating (turn on below target, off above); preserved across the edit.
     val heating = onTenths <= offTenths
+    // Target and hysteresis are shown rounded to a tenth, but the edit is kept as a shift of the device's
+    // own thresholds: rounding them back would rewrite an odd band on a plain Save (225/230 → 225/231).
     val initialTargetT = ((onTenths + offTenths) / 2.0).roundToInt()
     val initialHystT = (abs(offTenths - onTenths) / 2.0).roundToInt().coerceAtLeast(1)
 
-    var targetT by remember { mutableStateOf(initialTargetT) }
-    var hystT by remember { mutableStateOf(initialHystT) }
+    var targetShift by remember { mutableStateOf(0) }
+    var hystShift by remember { mutableStateOf(0) }
+    val targetT = initialTargetT + targetShift
+    val hystT = initialHystT + hystShift
 
     // Step bounds in tenths follow the unit (web-theme defaults), expanded if current values fall outside.
     val tMinT = if (isHumidity) 0 else minOf(50, initialTargetT - 10)
     val tMaxT = if (isHumidity) 1000 else maxOf(400, initialTargetT + 10)
     val hMaxT = if (isHumidity) 300 else maxOf(100, initialHystT + 5)
 
-    val onT = if (heating) targetT - hystT else targetT + hystT
-    val offT = if (heating) targetT + hystT else targetT - hystT
+    val (onT, offT) = shiftedThresholds(onTenths, offTenths, targetShift, hystShift)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -173,11 +176,11 @@ private fun ThermostatDialog(
                 )
 
                 Stepper("Kívánt érték", targetT, unit) { dir ->
-                    targetT = (targetT + dir).coerceIn(tMinT, tMaxT)
+                    targetShift = (targetT + dir).coerceIn(tMinT, tMaxT) - initialTargetT
                 }
                 if (expertMode) {
                     Stepper("Hiszterézis (±)", hystT, unit) { dir ->
-                        hystT = (hystT + dir).coerceIn(1, hMaxT)
+                        hystShift = (hystT + dir).coerceIn(1, hMaxT) - initialHystT
                     }
                 } else {
                     // Not editable for a plain user, but still worth seeing — show it read-only.
@@ -192,10 +195,25 @@ private fun ThermostatDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(onT, offT) }) { Text("Mentés") }
+            // Unchanged → nothing to write to the device.
+            TextButton(onClick = { if (targetShift == 0 && hystShift == 0) onDismiss() else onConfirm(onT, offT) }) {
+                Text("Mentés")
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Mégse") } },
     )
+}
+
+/**
+ * The thresholds after moving the target by [targetShift] and widening the band by [hystShift] on each
+ * side (tenths). Applied to the device's own [onTenths]/[offTenths], so a zero shift returns them exactly.
+ * Heating (on ≤ off) widens by lowering on and raising off; cooling the reverse. Pure → unit-testable.
+ */
+internal fun shiftedThresholds(onTenths: Int, offTenths: Int, targetShift: Int, hystShift: Int): Pair<Int, Int> {
+    val heating = onTenths <= offTenths
+    val onT = onTenths + targetShift + if (heating) -hystShift else hystShift
+    val offT = offTenths + targetShift + if (heating) hystShift else -hystShift
+    return onT to offT
 }
 
 /**
