@@ -149,7 +149,10 @@ private fun ThermostatDialog(
     // Target and hysteresis are shown rounded to a tenth, but the edit is kept as a shift of the device's
     // own thresholds: rounding them back would rewrite an odd band on a plain Save (225/230 → 225/231).
     val initialTargetT = ((onTenths + offTenths) / 2.0).roundToInt()
-    val initialHystT = (abs(offTenths - onTenths) / 2.0).roundToInt().coerceAtLeast(1)
+    // Not floored at 1: a zero-width device band must show ±0.0, or the readout runs a tenth ahead of
+    // what is written. The stepper's floor is 1 only for a band that is already wider.
+    val initialHystT = (abs(offTenths - onTenths) / 2.0).roundToInt()
+    val hMinT = minOf(1, initialHystT)
 
     var targetShift by remember { mutableStateOf(0) }
     var hystShift by remember { mutableStateOf(0) }
@@ -180,7 +183,7 @@ private fun ThermostatDialog(
                 }
                 if (expertMode) {
                     Stepper("Hiszterézis (±)", hystT, unit) { dir ->
-                        hystShift = (hystT + dir).coerceIn(1, hMaxT) - initialHystT
+                        hystShift = (hystT + dir).coerceIn(hMinT, hMaxT) - initialHystT
                     }
                 } else {
                     // Not editable for a plain user, but still worth seeing — show it read-only.
