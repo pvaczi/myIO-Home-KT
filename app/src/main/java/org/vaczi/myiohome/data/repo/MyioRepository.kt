@@ -1,11 +1,11 @@
 package org.vaczi.myiohome.data.repo
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.model.ServerInfo
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.net.DeviceGate
 import org.vaczi.myiohome.data.net.MyioHttpClient
 import org.vaczi.myiohome.data.net.MyioIndexParser
 import org.vaczi.myiohome.data.net.Perm
@@ -23,9 +23,10 @@ import org.vaczi.myiohome.data.net.ServerConfig
  * the UI locks them. [saveSnapshot] persists a labeled state for the next launch.
  *
  * **Concurrency:** the myIO device (W5100, 4 sockets) can't take concurrent TCP connections and a POST
- * storm freezes it for ~1 minute, so every network call on this repo is serialized on [netMutex] (one
- * repo = one server), and consecutive POSTs are paced ≥ [POST_COOLDOWN_MS] apart. The pacing delay is
- * held on a separate [postPaceMutex] (not [netMutex]), so a poll can still slip in during the cooldown.
+ * storm freezes it for ~1 minute, so every network call is serialized on the device's [DeviceGate] — shared
+ * by every repository (and discovery) talking to the same host:port, not just this instance — and
+ * consecutive POSTs to the device are paced ≥ [POST_COOLDOWN_MS] apart. The pacing delay is held on the
+ * gate's separate `postPace` lock (not `net`), so a poll can still slip in during the cooldown.
  */
 class MyioRepository(
     val config: ServerConfig,
@@ -35,14 +36,10 @@ class MyioRepository(
 
     private val client = MyioHttpClient(config)
 
-    // Serializes ALL network I/O for this server (poll / getInfo / refreshMetadata / sendCommand) so no
-    // two connections to the device overlap.
-    private val netMutex = Mutex()
-
-    // Serializes pacing among POSTs only (so the ≥1s spacing is accurate under a tap storm) without
-    // blocking a poll during the cooldown wait.
-    private val postPaceMutex = Mutex()
-    @Volatile private var lastPostAtMs = 0L
+    // Serializes ALL network I/O to this device (poll / getInfo / refreshMetadata / sendCommand), across
+    // every repository instance, so no two connections to the device overlap.
+    private val gate = DeviceGate.of(config.host, config.port)
+    private val netMutex = gate.net
 
     /**
      * All index/snapshot-derived metadata as one immutable snapshot, replaced atomically. Keeping the maps
@@ -112,14 +109,14 @@ class MyioRepository(
 
     /**
      * POST a control command. Paces consecutive POSTs ≥ [POST_COOLDOWN_MS] apart (the device freezes under
-     * a burst of writes). The wait is on [postPaceMutex], so a concurrent [poll] can still take [netMutex]
-     * during the cooldown; only the actual POST holds [netMutex].
+     * a burst of writes). The wait is on the gate's `postPace` lock, so a concurrent [poll] can still take
+     * [netMutex] during the cooldown; only the actual POST holds [netMutex].
      */
-    suspend fun sendCommand(body: String) = postPaceMutex.withLock {
-        val wait = POST_COOLDOWN_MS - (System.currentTimeMillis() - lastPostAtMs)
+    suspend fun sendCommand(body: String) = gate.postPace.withLock {
+        val wait = POST_COOLDOWN_MS - (System.currentTimeMillis() - gate.lastPostAtMs)
         if (wait > 0) delay(wait)
         netMutex.withLock { client.sendCommand(body) }
-        lastPostAtMs = System.currentTimeMillis()
+        gate.lastPostAtMs = System.currentTimeMillis()
     }
 
     private fun cacheNames(s: ServerState) {

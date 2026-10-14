@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withLock
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
@@ -65,8 +66,14 @@ class MyioDiscovery(
             Socket().use { it.connect(InetSocketAddress(host, port), connectTimeoutMs); true }
         }.getOrDefault(false)
 
-    /** Best-effort port-80 name lookup; null on any failure (wrong creds, timeout, format mismatch). */
-    private fun fetchName(host: String, user: String, password: String): String? = runCatching {
+    /**
+     * Best-effort port-80 name lookup; null on any failure (wrong creds, timeout, format mismatch). Holds
+     * the device's [DeviceGate] so it never overlaps a poll of an already configured server.
+     */
+    private suspend fun fetchName(host: String, user: String, password: String): String? =
+        DeviceGate.of(host, httpPort).net.withLock { fetchNameUnlocked(host, user, password) }
+
+    private fun fetchNameUnlocked(host: String, user: String, password: String): String? = runCatching {
         Socket().use { sock ->
             sock.connect(InetSocketAddress(host, httpPort), connectTimeoutMs)
             sock.soTimeout = 2_500
