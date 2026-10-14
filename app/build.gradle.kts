@@ -9,12 +9,12 @@ plugins {
 
 android {
     namespace = "org.vaczi.myiohome"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.vaczi.myiohome"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 7
         versionName = "0.1.6"
     }
