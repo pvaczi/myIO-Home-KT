@@ -1,14 +1,18 @@
 package org.vaczi.myiohome
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.local.CoverStore
@@ -59,6 +64,16 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleViewIntent(intent)
         setContent {
             val theme by viewModel.theme.collectAsStateWithLifecycle()
+            // System bar icons follow the app's theme, not just the system mode: GREEN is always dark, so
+            // the default auto style would draw dark icons on its black bar in system light mode.
+            val darkBars = theme == AppTheme.GREEN || isSystemInDarkTheme()
+            DisposableEffect(darkBars) {
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { darkBars },
+                    navigationBarStyle = SystemBarStyle.auto(LIGHT_SCRIM, DARK_SCRIM) { darkBars },
+                )
+                onDispose {}
+            }
             MyioHomeTheme(theme = theme) {
                 val navController = rememberNavController()
                 val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -225,5 +240,11 @@ class MainActivity : ComponentActivity() {
         val uri = intent.data ?: return
         val backup = SettingsSharing.readText(this, uri)?.let { SettingsBackup.decode(it) }
         importPrompt = if (backup != null) ImportPrompt.Ready(backup) else ImportPrompt.Invalid
+    }
+
+    private companion object {
+        // The navigation-bar scrims enableEdgeToEdge() uses by default (androidx.activity).
+        val LIGHT_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
+        val DARK_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
     }
 }
