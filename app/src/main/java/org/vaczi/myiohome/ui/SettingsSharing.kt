@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
@@ -33,8 +34,24 @@ object SettingsSharing {
         context.startActivity(Intent.createChooser(send, "Beállítások megosztása"))
     }
 
-    /** Read the full text of [uri] (an incoming shared file), or null on any error. */
+    /** A settings backup is a few kB; anything far larger is not one (and must not be read into memory). */
+    private const val MAX_IMPORT_BYTES = 512 * 1024
+
+    /**
+     * Read the full text of [uri] (an incoming shared file), or null on any error or when it exceeds
+     * [MAX_IMPORT_BYTES]. Blocking I/O — call it off the main thread.
+     */
     fun readText(context: Context, uri: Uri): String? = runCatching {
-        context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val out = ByteArrayOutputStream()
+            val chunk = ByteArray(8 * 1024)
+            while (true) {
+                val n = input.read(chunk)
+                if (n < 0) break
+                if (out.size() + n > MAX_IMPORT_BYTES) return@runCatching null
+                out.write(chunk, 0, n)
+            }
+            out.toByteArray().decodeToString()
+        }
     }.getOrNull()
 }

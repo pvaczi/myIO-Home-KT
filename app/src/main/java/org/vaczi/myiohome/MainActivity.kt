@@ -17,6 +17,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -234,12 +238,16 @@ class MainActivity : ComponentActivity() {
         handleViewIntent(intent)
     }
 
-    /** If [intent] opened a shared file, read + validate it and arm the replace dialog (or an error). */
+    /** If [intent] opened a shared file, read + validate it (off the main thread) and arm the replace dialog (or an error). */
     private fun handleViewIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
-        val backup = SettingsSharing.readText(this, uri)?.let { SettingsBackup.decode(it) }
-        importPrompt = if (backup != null) ImportPrompt.Ready(backup) else ImportPrompt.Invalid
+        lifecycleScope.launch {
+            val backup = withContext(Dispatchers.IO) {
+                SettingsSharing.readText(this@MainActivity, uri)?.let { SettingsBackup.decode(it) }
+            }
+            importPrompt = if (backup != null) ImportPrompt.Ready(backup) else ImportPrompt.Invalid
+        }
     }
 
     private companion object {
