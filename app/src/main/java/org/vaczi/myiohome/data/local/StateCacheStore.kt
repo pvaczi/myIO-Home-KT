@@ -35,10 +35,12 @@ class StateCacheStore(private val dataStore: DataStore<Preferences>) {
 
     /** Drop every cached snapshot whose key is not in [keep] (deleted slots, re-pointed hosts, old key form). */
     suspend fun prune(keep: Set<String>) {
-        val present = dataStore.data.first().asMap().keys.map { it.name }.toSet()
-        val stale = staleEntries(present, keep)
-        if (stale.isEmpty()) return
-        dataStore.edit { prefs -> stale.forEach { prefs.remove(stringPreferencesKey(it)) } }
+        // Inside one transaction, so a save between reading the keys and removing them can't be lost or
+        // left behind. DataStore skips the write when nothing changed.
+        dataStore.edit { prefs ->
+            staleEntries(prefs.asMap().keys.map { it.name }.toSet(), keep)
+                .forEach { prefs.remove(stringPreferencesKey(it)) }
+        }
     }
 
     private fun key(cacheKey: String) = stringPreferencesKey(PREFIX + cacheKey)
