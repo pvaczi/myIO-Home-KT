@@ -91,6 +91,7 @@ class MyioViewModel(
     private val zones: ZoneStore,
     private val coverStore: CoverStore,
     private val repoFactory: (MyioServer) -> MyioRepository = { MyioRepository(it.toConfig()) },
+    private val stateCache: StateCacheStore? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(MyioUiState())
@@ -431,6 +432,15 @@ class MyioViewModel(
                         settings.selectAggregate()
                     }
                 }
+        }
+        // Keep the snapshot cache to the configured slots: a deleted slot or one re-pointed at another host
+        // leaves its old entry behind otherwise (also runs once per launch on the first emission).
+        stateCache?.let { cache ->
+            viewModelScope.launch {
+                settings.servers.collect { list ->
+                    runCatching { cache.prune(list.map { StateCacheStore.cacheKey(it) }.toSet()) }
+                }
+            }
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
     }
@@ -892,7 +902,8 @@ class MyioViewModel(
                     settings = settings,
                     zones = zones,
                     coverStore = covers,
-                    repoFactory = { MyioRepository(it.toConfig(), stateCache, it.id) },
+                    repoFactory = { MyioRepository(it.toConfig(), stateCache, StateCacheStore.cacheKey(it)) },
+                    stateCache = stateCache,
                 )
             }
         }
