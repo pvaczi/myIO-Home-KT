@@ -306,19 +306,28 @@ class MyioViewModel(
     val discoveryState: StateFlow<DiscoveryState> = _discoveryState.asStateFlow()
     private var discoveryJob: Job? = null
 
+    // Identifies the current scan run. A cancelled run's late callbacks (a probe already past its blocking
+    // connect reports progress) must not touch the state of the run that replaced it. Read off-main by
+    // the progress callback → @Volatile.
+    @Volatile private var discoveryRun = 0
+
     /** Scan [subnet] (first three octets) for myIO servers; [user]/[password] try to fetch names. */
     fun startDiscovery(subnet: String, user: String, password: String) {
         discoveryJob?.cancel()
+        val run = ++discoveryRun
         _discoveryState.value = DiscoveryState(running = true, total = 254)
         discoveryJob = viewModelScope.launch {
-            runCatching {
+            val found = try {
                 discovery.scan(subnet, user, password) { done, total ->
-                    _discoveryState.update { it.copy(done = done, total = total) }
+                    if (discoveryRun == run) _discoveryState.update { it.copy(done = done, total = total) }
                 }
-            }.onSuccess { found ->
-                _discoveryState.update { it.copy(running = false, finished = true, results = found) }
-            }.onFailure {
-                _discoveryState.update { it.copy(running = false, finished = true) }
+            } catch (e: CancellationException) {
+                throw e // superseded or reset: the newer run owns the state
+            } catch (e: Exception) {
+                null
+            }
+            if (discoveryRun == run) {
+                _discoveryState.update { it.copy(running = false, finished = true, results = found ?: it.results) }
             }
         }
     }
@@ -326,6 +335,7 @@ class MyioViewModel(
     /** Reset discovery (also cancels a run in progress) — call when the dialog closes. */
     fun resetDiscovery() {
         discoveryJob?.cancel()
+        discoveryRun++
         _discoveryState.value = DiscoveryState()
     }
 
