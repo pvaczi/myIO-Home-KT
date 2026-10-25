@@ -5,6 +5,7 @@ import org.vaczi.myiohome.data.model.ServerInfo
 import org.vaczi.myiohome.data.model.ServerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -75,6 +76,8 @@ class MyioHttpClient(
         private val defaultClient: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
+            // No idle connections: backs up the per-request `Connection: close` (see [baseRequest]).
+            .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
             .build()
 
         /**

@@ -52,9 +52,9 @@ class MyioDiscovery(
         val done = AtomicInteger(0)
         hosts.map { host ->
             async(dispatcher) {
-                val open = probe(host)
+                val hit = probe(host, user, password)
                 onProgress(done.incrementAndGet(), hosts.size)
-                if (open) DiscoveredServer(host, fetchName(host, user, password)) else null
+                hit
             }
         }.awaitAll()
             .filterNotNull()
@@ -62,11 +62,14 @@ class MyioDiscovery(
     }
 
     /**
-     * The port-843 connect, under the device's [DeviceGate]: the probe socket shares the W5100's four sockets
-     * with port 80, so it must not open beside a running poll of an already configured server.
+     * The port-843 connect and, on a hit, the port-80 name lookup — both under one hold of the device's
+     * [DeviceGate]: the probe socket shares the W5100's four sockets with port 80, so neither may open beside
+     * a running poll of an already configured server, nor may a poll slip in between them.
      */
-    internal suspend fun probe(host: String): Boolean =
-        DeviceGate.of(host, httpPort).net.withLock { isPortOpen(host, probePort) }
+    internal suspend fun probe(host: String, user: String, password: String): DiscoveredServer? =
+        DeviceGate.of(host, httpPort).net.withLock {
+            if (isPortOpen(host, probePort)) DiscoveredServer(host, fetchNameUnlocked(host, user, password)) else null
+        }
 
     private fun isPortOpen(host: String, port: Int): Boolean =
         runCatching {
@@ -74,12 +77,9 @@ class MyioDiscovery(
         }.getOrDefault(false)
 
     /**
-     * Best-effort port-80 name lookup; null on any failure (wrong creds, timeout, format mismatch). Holds
-     * the device's [DeviceGate] so it never overlaps a poll of an already configured server.
+     * Best-effort port-80 name lookup; null on any failure (wrong creds, timeout, format mismatch). The
+     * caller holds the device's [DeviceGate].
      */
-    private suspend fun fetchName(host: String, user: String, password: String): String? =
-        DeviceGate.of(host, httpPort).net.withLock { fetchNameUnlocked(host, user, password) }
-
     private fun fetchNameUnlocked(host: String, user: String, password: String): String? = runCatching {
         Socket().use { sock ->
             sock.connect(InetSocketAddress(host, httpPort), connectTimeoutMs)

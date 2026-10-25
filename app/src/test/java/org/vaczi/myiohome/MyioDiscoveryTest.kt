@@ -5,11 +5,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.vaczi.myiohome.data.net.DeviceGate
+import org.vaczi.myiohome.data.net.DiscoveredServer
 import org.vaczi.myiohome.data.net.MyioDiscovery
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -48,11 +48,16 @@ class MyioDiscoveryTest {
             val discovery = MyioDiscovery(probePort = server.localPort, httpPort = 18_080)
             val gate = DeviceGate.of("127.0.0.1", 18_080).net
             gate.lock()
-            val probe = async(Dispatchers.IO) { discovery.probe("127.0.0.1") }
-            delay(300)
-            assertFalse("probe must wait while a poll holds the gate", probe.isCompleted)
-            gate.unlock()
-            assertTrue(probe.await())
+            val probe = try {
+                val probe = async(Dispatchers.IO) { discovery.probe("127.0.0.1", "admin", "admin") }
+                delay(300)
+                assertFalse("probe must wait while a poll holds the gate", probe.isCompleted)
+                probe
+            } finally {
+                gate.unlock()
+            }
+            // Nothing listens on the HTTP port, so the hit carries no name.
+            assertEquals(DiscoveredServer("127.0.0.1", null), probe.await())
         }
     }
 }

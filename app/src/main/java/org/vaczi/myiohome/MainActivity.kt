@@ -248,6 +248,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
         importJob?.cancel()
+        importPrompt = null // the previous file's dialog must not stay actionable while the new one loads
         importJob = lifecycleScope.launch {
             // withContext re-checks cancellation on return, so a superseded read never publishes.
             val backup = withContext(Dispatchers.IO) {
