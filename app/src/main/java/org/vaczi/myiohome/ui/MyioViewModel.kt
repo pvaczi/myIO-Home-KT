@@ -522,6 +522,20 @@ class MyioViewModel(
         }
     }
 
+    /**
+     * Undo of [deleteServer]: put the same slot (same id, so zone/cover config keyed by it reapplies) back
+     * at [index]. No-op if it is already there; re-selects it if nothing is selected after the delete.
+     */
+    fun restoreServer(server: MyioServer, index: Int) {
+        viewModelScope.launch {
+            settings.updateServers { list ->
+                if (list.any { it.id == server.id }) list
+                else list.toMutableList().apply { add(index.coerceIn(0, size), server) }
+            }
+            if (currentServer.value == null) settings.selectServer(server.id)
+        }
+    }
+
     private suspend fun pollLoop(serverId: String) {
         val repo = repo ?: return
         runPollLoop(repo, serverId, currentGen = { pollGeneration }, sending = { isSending(repo) }) {

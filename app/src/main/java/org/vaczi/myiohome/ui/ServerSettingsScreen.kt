@@ -21,15 +21,33 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.launch
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.SettingsStore
+import org.vaczi.myiohome.data.model.ServerInfo
 import org.vaczi.myiohome.data.net.DiscoveredServer
 import org.vaczi.myiohome.data.net.localIpv4Subnets
 
@@ -63,6 +82,8 @@ fun ServerSettingsScreen(
     onBack: () -> Unit,
     onSave: (original: MyioServer?, updated: MyioServer) -> Unit,
     onDelete: (MyioServer) -> Unit,
+    /** Undo of a delete: re-insert the slot at its original index. Null falls back to appending via [onSave]. */
+    onRestore: ((MyioServer, Int) -> Unit)? = null,
     onMoveServer: (MyioServer, Boolean) -> Unit = { _, _ -> },
     discovery: DiscoveryState = DiscoveryState(),
     onStartDiscovery: (subnet: String, user: String, password: String) -> Unit = { _, _, _ -> },
@@ -71,6 +92,8 @@ fun ServerSettingsScreen(
     defaultPassword: String = "admin",
     /** Expert mode gates the per-server "hide from display" switch in the editor. */
     expertMode: Boolean = true,
+    /** (server id, info) of the currently connected server; shown in that server's editor only. */
+    currentServerInfo: Pair<String, ServerInfo>? = null,
 ) {
     // null = dialog closed; Editing(null) = adding; Editing(server) = editing that slot.
     var editing by remember { mutableStateOf<Editing?>(null) }
@@ -85,8 +108,12 @@ fun ServerSettingsScreen(
             .distinct()
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Szerverek") },
@@ -97,7 +124,7 @@ fun ServerSettingsScreen(
                 },
                 actions = {
                     IconButton(onClick = { discovering = true }) {
-                        Icon(Icons.Filled.Wifi, contentDescription = "Keresés a hálózaton")
+                        Icon(Icons.Filled.Search, contentDescription = "Keresés a hálózaton")
                     }
                 },
             )
@@ -108,7 +135,23 @@ fun ServerSettingsScreen(
             }
         },
     ) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize()) {
+        if (servers.isEmpty()) {
+            Column(
+                modifier = Modifier.padding(padding).fillMaxSize().padding(32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Még nincs szerver", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Keresd meg a myIO eszközöket a hálózaton, vagy vedd fel őket kézzel.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                FilledTonalButton(onClick = { discovering = true }) { Text("Keresés a hálózaton") }
+                TextButton(onClick = { editing = Editing(null) }) { Text("Kézi felvétel") }
+            }
+        } else LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             itemsIndexed(servers, key = { _, s -> s.id }) { index, server ->
                 ListItem(
                     headlineContent = { Text(server.name) },
@@ -131,7 +174,22 @@ fun ServerSettingsScreen(
                             IconButton(onClick = { editing = Editing(server) }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Szerkesztés")
                             }
-                            IconButton(onClick = { onDelete(server) }) {
+                            IconButton(onClick = {
+                                val at = servers.indexOfFirst { it.id == server.id }
+                                onDelete(server)
+                                // Replace any still-showing snackbar so a stale Undo can't outlive its message.
+                                scope.launch {
+                                    snackbarHostState.currentSnackbarData?.dismiss()
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "${server.name} törölve",
+                                        actionLabel = "Visszavonás",
+                                        duration = SnackbarDuration.Long,
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        if (onRestore != null) onRestore(server, at) else onSave(null, server)
+                                    }
+                                }
+                            }) {
                                 Icon(Icons.Filled.Delete, contentDescription = "Törlés")
                             }
                         }
@@ -148,6 +206,7 @@ fun ServerSettingsScreen(
             initial = target.server,
             subnetCandidates = subnetCandidates,
             expertMode = expertMode,
+            serverInfo = currentServerInfo?.takeIf { it.first == target.server?.id }?.second,
             onDismiss = { editing = null },
             onConfirm = { updated -> onSave(target.server, updated); editing = null },
         )
@@ -217,7 +276,7 @@ private fun DiscoveryDialog(
                     onPick = { subnet = it },
                 )
                 OutlinedTextField(user, { user = it }, label = { Text("Felhasználó") }, singleLine = true, enabled = !state.running)
-                OutlinedTextField(password, { password = it }, label = { Text("Jelszó") }, singleLine = true, enabled = !state.running)
+                PasswordField(password, { password = it }, "Jelszó", enabled = !state.running)
 
                 if (state.running) {
                     val progress = if (state.total > 0) state.done.toFloat() / state.total else 0f
@@ -313,6 +372,29 @@ private fun SubnetDropdown(
     }
 }
 
+/** Password field: masked by default, with an eye toggle to reveal it. */
+@Composable
+private fun PasswordField(value: String, onValueChange: (String) -> Unit, label: String, enabled: Boolean = true) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        enabled = enabled,
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (visible) "Jelszó elrejtése" else "Jelszó megjelenítése",
+                )
+            }
+        },
+    )
+}
+
 /** Wrapper so a closed dialog (null) is distinct from "add new" (Editing(server = null)). */
 private data class Editing(val server: MyioServer?)
 
@@ -325,6 +407,7 @@ private fun ServerEditDialog(
     initial: MyioServer?,
     subnetCandidates: List<String>,
     expertMode: Boolean,
+    serverInfo: ServerInfo?,
     onDismiss: () -> Unit,
     onConfirm: (MyioServer) -> Unit,
 ) {
@@ -351,13 +434,20 @@ private fun ServerEditDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (serverInfo != null) {
+                    Text(
+                        "Sorozatszám: ${serverInfo.serial} · Firmware: v${serverInfo.version}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 OutlinedTextField(name, { name = it }, label = { Text("Név") }, singleLine = true)
                 if (subnetCandidates.isNotEmpty()) {
                     SubnetDropdown(
                         candidates = subnetCandidates,
                         expanded = prefixMenuOpen,
                         onExpandedChange = { prefixMenuOpen = it },
-                        label = "/24 tartomány (gyorskitöltés)",
+                        label = "Alháló",
                         value = "",
                         onValueChange = {},
                         editable = false,
@@ -365,26 +455,41 @@ private fun ServerEditDialog(
                         onPick = { candidate -> host = "$candidate.${host.substringAfterLast('.', "")}" },
                     )
                 }
-                OutlinedTextField(host, { host = it }, label = { Text("IP / host") }, singleLine = true)
+                OutlinedTextField(
+                    host,
+                    { host = it },
+                    label = { Text("IP / host") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                )
                 OutlinedTextField(
                     port,
                     { port = it.filter(Char::isDigit) },
                     label = { Text("Port") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
                 )
-                OutlinedTextField(user, { user = it }, label = { Text("Felhasználó") }, singleLine = true)
-                OutlinedTextField(password, { password = it }, label = { Text("Jelszó") }, singleLine = true)
+                OutlinedTextField(
+                    user,
+                    { user = it },
+                    label = { Text("Felhasználó") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                )
+                PasswordField(password, { password = it }, "Jelszó")
                 Text(
                     "Frissítési időköz",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    POLL_PRESETS.forEach { sec ->
-                        FilterChip(
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    POLL_PRESETS.forEachIndexed { i, sec ->
+                        SegmentedButton(
                             selected = pollSec == sec,
                             onClick = { pollSec = sec },
-                            label = { Text("$sec mp") },
+                            shape = SegmentedButtonDefaults.itemShape(index = i, count = POLL_PRESETS.size),
+                            icon = {}, // no check mark: it would squeeze the equal-width cells
+                            label = { Text("$sec mp", maxLines = 1) },
                         )
                     }
                 }
@@ -411,7 +516,7 @@ private fun ServerEditDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     OutlinedTextField(shareUser, { shareUser = it }, label = { Text("Megosztási felhasználó") }, singleLine = true)
-                    OutlinedTextField(sharePassword, { sharePassword = it }, label = { Text("Megosztási jelszó") }, singleLine = true)
+                    PasswordField(sharePassword, { sharePassword = it }, "Megosztási jelszó")
                 }
             }
         },

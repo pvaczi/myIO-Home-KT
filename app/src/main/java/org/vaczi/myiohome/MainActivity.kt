@@ -189,6 +189,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack() },
                             onSave = viewModel::upsertServer,
                             onDelete = viewModel::deleteServer,
+                            onRestore = viewModel::restoreServer,
                             onMoveServer = viewModel::moveServer,
                             discovery = discovery,
                             onStartDiscovery = viewModel::startDiscovery,
@@ -197,6 +198,7 @@ class MainActivity : ComponentActivity() {
                             defaultUser = currentServer?.user ?: "admin",
                             defaultPassword = currentServer?.password ?: "admin",
                             expertMode = expertMode,
+                            currentServerInfo = currentServer?.let { s -> ui.info?.let { s.id to it } },
                         )
                     }
                 }
