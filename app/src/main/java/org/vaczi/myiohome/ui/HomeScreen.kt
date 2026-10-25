@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.vaczi.myiohome.data.local.MyioServer
@@ -357,10 +358,16 @@ private fun EmptyZones(onAddZone: (String) -> String?) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Még nincs zóna", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                "Hozz létre zónákat, majd a címke-ikonnal sorold be az eszközöket.",
+                "Még nincs zóna",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "Hozz létre zónákat. Az eszközök besorolásához kapcsold be a Szakértő módot a " +
+                    "Beállításokban, majd használd a címke-ikont.",
                 style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             FilledTonalButton(onClick = { showAdd = true }) { Text("Zóna hozzáadása") }

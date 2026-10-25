@@ -76,15 +76,15 @@ fun AppSettingsScreen(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
             SectionHeader("Téma")
-            ThemeOption("Zöld (eredeti)", "A klasszikus myIO zöldes megjelenés", AppTheme.GREEN, theme, onSelectTheme)
-            ThemeOption("Dinamikus / kék", "Material You – a háttérképből vett színek (Android 12+)", AppTheme.DYNAMIC, theme, onSelectTheme)
+            ThemeOption("Zöld (eredeti)", "Mindig sötét, fekete háttér – a klasszikus myIO-színek", AppTheme.GREEN, theme, onSelectTheme)
+            ThemeOption("Dinamikus / kék", "A háttérképből vett színek, követi a telefon világos/sötét módját (Android 12+)", AppTheme.DYNAMIC, theme, onSelectTheme)
 
             HorizontalDivider()
 
             SectionHeader("Szerverek")
             ListItem(
                 headlineContent = { Text("Szerverek szerkesztése…") },
-                supportingContent = { Text("Slotok hozzáadása, módosítása, törlése") },
+                supportingContent = { Text("Szerverek felvétele, módosítása, törlése") },
                 leadingContent = { Icon(Icons.Filled.Dns, contentDescription = null) },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth().selectable(
@@ -115,9 +115,7 @@ fun AppSettingsScreen(
                 headlineContent = { Text("Szakértő mód") },
                 supportingContent = {
                     Text(
-                        "Bekapcsolva: szerkesztheted a zónákat, és elrejthetsz entitásokat / szervereket a " +
-                            "megjelenítésből. Kikapcsolva: egyszerűsített, zárolt nézet — csak a bekapcsolt " +
-                            "elemek látszanak, a szerkesztő eszközök rejtve.",
+                        "Zónák szerkesztése és elemek elrejtése. Kikapcsolva egyszerű, zárolt nézet.",
                     )
                 },
                 leadingContent = { Icon(Icons.Filled.Tune, contentDescription = null) },
@@ -182,7 +180,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
                     "Fülek",
                     "Az alsó sávban a kimenet-típusok között válthatsz: Relé, PCA, Redőny, " +
                         "Szenzor stb. — csak a nem-üres fülek látszanak. A csempére koppintva " +
-                        "kapcsolsz; a tárcsázható kimeneteknél a szintet is állíthatod.",
+                        "kapcsolsz; a fényerő-szabályozható kimeneteknél a szintet is állíthatod.",
                 )
                 HelpParagraph(
                     "Zónák és Otthon nézet",
@@ -192,7 +190,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
                 HelpParagraph(
                     "Szakértő mód",
                     "Bekapcsolva szerkesztheted a zónákat, átnevezheted a redőnyöket és " +
-                        "elrejthetsz entitásokat. Kikapcsolva egyszerűsített, zárolt nézetet kapsz.",
+                        "elrejthetsz eszközöket. Kikapcsolva egyszerűsített, zárolt nézetet kapsz.",
                 )
                 HelpParagraph(
                     "Beállítások megosztása",
