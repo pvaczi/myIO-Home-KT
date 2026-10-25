@@ -310,10 +310,11 @@ fun MainScreen(
         }
     }
 
-    // Landscape (wider than tall): the per-server type tabs move to a side rail.
+    // Landscape (wider than tall): the per-server type tabs / the aggregate zones move to a side rail.
     val config = LocalConfiguration.current
-    val useRail = config.screenWidthDp > config.screenHeightDp &&
-        !isAggregate && currentServer != null && visibleTabs.isNotEmpty()
+    val useRail = config.screenWidthDp > config.screenHeightDp && (
+        if (isAggregate) globalZones.isNotEmpty() else currentServer != null && visibleTabs.isNotEmpty()
+        )
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -391,7 +392,7 @@ fun MainScreen(
         },
         bottomBar = {
             if (isAggregate) {
-                if (globalZones.isNotEmpty()) {
+                if (globalZones.isNotEmpty() && !useRail) {
                     AggregateBottomBar(
                         zones = globalZones,
                         pagerState = aggregatePagerState,
@@ -413,7 +414,13 @@ fun MainScreen(
         },
     ) { padding ->
         Row(Modifier.padding(padding).fillMaxSize()) {
-        if (useRail) {
+        if (useRail && isAggregate) {
+            AggregateNavRail(
+                zones = globalZones,
+                pagerState = aggregatePagerState,
+                onSelectPage = { page -> scope.launch { aggregatePagerState.animateScrollToPage(page) } },
+            )
+        } else if (useRail) {
             // Landscape: a side rail instead of the bottom bar, so the content keeps the full height.
             // Scrolls because seven items can exceed the short landscape height.
             NavigationRail(
@@ -619,6 +626,37 @@ private fun RowScope.ZoneNavItem(zone: Zone, selected: Boolean, onClick: () -> U
         icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
         label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
+}
+
+/**
+ * Landscape counterpart of [AggregateBottomBar]: the same destinations on a side rail. The rail scrolls,
+ * so every zone is listed — no ‹/› windowing needed. Page indices as in [AggregateBottomBar].
+ */
+@Composable
+private fun AggregateNavRail(
+    zones: List<Zone>,
+    pagerState: PagerState,
+    onSelectPage: (Int) -> Unit,
+) {
+    NavigationRail(
+        modifier = Modifier.fillMaxHeight().verticalScroll(rememberScrollState()),
+        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+    ) {
+        NavigationRailItem(
+            selected = pagerState.currentPage == 0,
+            onClick = { onSelectPage(0) },
+            icon = { Icon(Icons.Filled.Home, contentDescription = "Összes") },
+            label = { Text("Összes") },
+        )
+        zones.forEachIndexed { i, zone ->
+            NavigationRailItem(
+                selected = pagerState.currentPage == i + 1,
+                onClick = { onSelectPage(i + 1) },
+                icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
+                label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            )
+        }
+    }
 }
 
 /** Shown instead of the assign/hide bar on a tab whose tiles stay live controls (Otthon, Termosztát). */

@@ -1,6 +1,7 @@
 package org.vaczi.myiohome.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -488,6 +489,7 @@ internal fun SensorTile(name: String, value: String) {
                 name,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -506,9 +508,10 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
     val active = zoneUi.activeZoneId
     val assigned = active != null && active in zoneUi.config.zonesOf(outputKey)
     Surface(
-        // Edit-mode highlight uses tertiary, not the primary "ON" green of the live tiles.
-        color = if (assigned) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = if (assigned) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        // Edit-mode highlight is an outline, never a fill: a filled container reads as the "ON" of the live tiles.
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = if (assigned) editHighlightBorder() else null,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
             .then(if (active != null) Modifier.clickable { zoneUi.onToggleAssignment(outputKey) } else Modifier),
@@ -523,6 +526,7 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
                 name,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -543,9 +547,10 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
 private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi) {
     val hidden = outputKey in hideUi.hiddenKeys
     Surface(
-        // Edit-mode highlight uses tertiary, not the primary "ON" green of the live tiles.
-        color = if (hidden) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = if (hidden) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onTertiaryContainer,
+        // Edit-mode highlight is an outline, never a fill: a filled container reads as the "ON" of the live tiles.
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = if (hidden) null else editHighlightBorder(),
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth().clickable { hideUi.onToggleHidden(outputKey) },
     ) {
@@ -560,6 +565,7 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
                 style = MaterialTheme.typography.bodyMedium,
                 textDecoration = if (hidden) TextDecoration.LineThrough else null,
                 modifier = Modifier.weight(1f),
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -572,6 +578,10 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
         }
     }
 }
+
+/** Selected-state outline of the assign / visibility edit tiles. */
+@Composable
+private fun editHighlightBorder() = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
 
 /** Small padlock shown on a tile the logged-in user may see but not control (no write permission). */
 @Composable
