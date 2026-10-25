@@ -52,7 +52,7 @@ class MyioDiscovery(
         val done = AtomicInteger(0)
         hosts.map { host ->
             async(dispatcher) {
-                val open = isPortOpen(host, probePort)
+                val open = probe(host)
                 onProgress(done.incrementAndGet(), hosts.size)
                 if (open) DiscoveredServer(host, fetchName(host, user, password)) else null
             }
@@ -60,6 +60,13 @@ class MyioDiscovery(
             .filterNotNull()
             .sortedBy { it.host.substringAfterLast('.').toIntOrNull() ?: 0 }
     }
+
+    /**
+     * The port-843 connect, under the device's [DeviceGate]: the probe socket shares the W5100's four sockets
+     * with port 80, so it must not open beside a running poll of an already configured server.
+     */
+    internal suspend fun probe(host: String): Boolean =
+        DeviceGate.of(host, httpPort).net.withLock { isPortOpen(host, probePort) }
 
     private fun isPortOpen(host: String, port: Int): Boolean =
         runCatching {

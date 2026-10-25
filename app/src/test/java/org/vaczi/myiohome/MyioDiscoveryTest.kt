@@ -1,9 +1,18 @@
 package org.vaczi.myiohome
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import org.vaczi.myiohome.data.net.DeviceGate
 import org.vaczi.myiohome.data.net.MyioDiscovery
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
+import java.net.ServerSocket
 
 /**
  * Pins the server-name scrape used to label discovered servers. The name lives in the index page
@@ -30,5 +39,20 @@ class MyioDiscoveryTest {
         assertNull(MyioDiscovery.parseName(page("Some Router Admin")))
         assertNull(MyioDiscovery.parseName("<html>no title here</html>"))
         assertNull(MyioDiscovery.parseName(page("myIO- vezérlő - index"))) // empty name
+    }
+
+    @Test
+    fun probeWaitsForTheDeviceGate() = runBlocking {
+        ServerSocket(0, 50, InetAddress.getLoopbackAddress()).use { server ->
+            // A port no other test gates on, so the held lock is this test's own.
+            val discovery = MyioDiscovery(probePort = server.localPort, httpPort = 18_080)
+            val gate = DeviceGate.of("127.0.0.1", 18_080).net
+            gate.lock()
+            val probe = async(Dispatchers.IO) { discovery.probe("127.0.0.1") }
+            delay(300)
+            assertFalse("probe must wait while a poll holds the gate", probe.isCompleted)
+            gate.unlock()
+            assertTrue(probe.await())
+        }
     }
 }
