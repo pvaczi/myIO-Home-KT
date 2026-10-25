@@ -18,7 +18,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
@@ -156,10 +155,15 @@ fun ServerSettingsScreen(
                 ListItem(
                     headlineContent = { Text(server.name) },
                     supportingContent = {
+                        // Address on its own line, flags short on a second one — the long form wrapped to five
+                        // lines beside the trailing buttons. The edit dialog explains what "rejtett" means.
+                        val flags = listOfNotNull(
+                            "rejtett".takeIf { server.hidden },
+                            server.shareUser?.takeIf { it.isNotBlank() }?.let { "megoszt: $it" },
+                        )
                         Text(
                             "${server.host}:${server.port}" +
-                                (if (server.hidden) " · rejtett (nem-szakértő nézetben)" else "") +
-                                (server.shareUser?.takeIf { it.isNotBlank() }?.let { " · megoszt: $it" } ?: ""),
+                                (if (flags.isEmpty()) "" else "\n" + flags.joinToString(" · ")),
                         )
                     },
                     leadingContent = { Icon(Icons.Filled.Dns, contentDescription = null) },
@@ -171,9 +175,7 @@ fun ServerSettingsScreen(
                             IconButton(onClick = { onMoveServer(server, false) }, enabled = index < servers.lastIndex) {
                                 Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Lejjebb")
                             }
-                            IconButton(onClick = { editing = Editing(server) }) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Szerkesztés")
-                            }
+                            // No edit button: the whole row opens the editor (clickable below).
                             IconButton(onClick = {
                                 val at = servers.indexOfFirst { it.id == server.id }
                                 onDelete(server)

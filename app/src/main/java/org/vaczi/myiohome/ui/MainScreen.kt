@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -79,6 +80,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.drop
@@ -653,7 +655,16 @@ private fun AggregateNavRail(
                 selected = pagerState.currentPage == i + 1,
                 onClick = { onSelectPage(i + 1) },
                 icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
-                label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                // Rail labels are not width-bound: without the cap a long zone name runs past the rail.
+                label = {
+                    Text(
+                        zone.name,
+                        modifier = Modifier.widthIn(max = 72.dp),
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
             )
         }
     }
