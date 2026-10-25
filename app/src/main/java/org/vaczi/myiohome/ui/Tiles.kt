@@ -213,11 +213,19 @@ internal fun CoverTile(cover: Cover, enabled: Boolean, expert: Boolean, actions:
                     cover.name.ifBlank { "Redőny ${cover.upId}" },
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f),
+                    minLines = 2,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!cover.writable) LockBadge()
-                Text(coverStateLabel(cover.state), style = MaterialTheme.typography.labelMedium)
+                // Only shown while moving; a stopped shutter is already told by the container colour.
+                if (moving) {
+                    Text(
+                        coverStateLabel(cover.state),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
                 if (expert) {
                     Box {
                         IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(28.dp)) {
@@ -361,6 +369,7 @@ private fun LampTile(
             Text(
                 name,
                 style = MaterialTheme.typography.bodyMedium,
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -411,6 +420,7 @@ private fun DimmableLampTile(
             Text(
                 name,
                 style = MaterialTheme.typography.bodyMedium,
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -478,7 +488,7 @@ internal fun SensorTile(name: String, value: String) {
                 name,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(8.dp))
@@ -496,8 +506,9 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
     val active = zoneUi.activeZoneId
     val assigned = active != null && active in zoneUi.config.zonesOf(outputKey)
     Surface(
-        color = lampContainerColor(assigned),
-        contentColor = lampContentColor(assigned),
+        // Edit-mode highlight uses tertiary, not the primary "ON" green of the live tiles.
+        color = if (assigned) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (assigned) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
             .then(if (active != null) Modifier.clickable { zoneUi.onToggleAssignment(outputKey) } else Modifier),
@@ -532,8 +543,9 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
 private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi) {
     val hidden = outputKey in hideUi.hiddenKeys
     Surface(
-        color = if (hidden) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
-        contentColor = if (hidden) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer,
+        // Edit-mode highlight uses tertiary, not the primary "ON" green of the live tiles.
+        color = if (hidden) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = if (hidden) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onTertiaryContainer,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth().clickable { hideUi.onToggleHidden(outputKey) },
     ) {

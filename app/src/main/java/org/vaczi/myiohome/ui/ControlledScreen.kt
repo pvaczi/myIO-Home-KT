@@ -109,7 +109,7 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
                 Text(
                     text = item.value,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (item.value == "BE") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!item.writable) {
                     LockBadge()
