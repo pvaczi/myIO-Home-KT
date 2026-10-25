@@ -103,6 +103,9 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     CONTROLLED("Termosztát", Icons.Filled.DeviceThermostat),
 }
 
+/** Assign and hide mode act only on the type tabs; Otthon and Termosztát keep their live controls. */
+private val Tab.isEditable get() = this != Tab.HOME && this != Tab.CONTROLLED
+
 /** The single active editing mode (mutually exclusive by construction). Expert-only; HOME-only for [REORDER]. */
 private enum class EditMode { NONE, ASSIGN, REORDER, HIDE }
 
@@ -282,6 +285,12 @@ fun MainScreen(
             }
         }
     }
+    // Assign/hide mode only work on the type tabs: entering from Otthon/Termosztát jumps to the first one,
+    // and while the shown page is not one, the mode bar is replaced by a hint.
+    val onEditableTab = visibleTabs.getOrNull(pagerState.currentPage)?.isEditable == true
+    val moveToEditableTab = {
+        if (!onEditableTab) visibleTabs.firstOrNull { it.isEditable }?.let { onSelectTab(it.name) }
+    }
 
     // Aggregate ("Otthon (összes)") tabs live in the bottom nav like the per-server type tabs: page 0 is
     // the "Összes" summary, pages 1..n are one global zone each. Swiping the pager and tapping the nav
@@ -340,6 +349,7 @@ fun MainScreen(
                             val entering = !assignMode
                             editMode = if (entering) EditMode.ASSIGN else EditMode.NONE
                             if (entering && activeZoneId == null) activeZoneId = zoneConfig.zones.firstOrNull()?.id
+                            if (entering) moveToEditableTab()
                         }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.Label,
@@ -352,6 +362,7 @@ fun MainScreen(
                     // Visibility toggle: enter/leave hide mode (tap a tile on a type tab to hide/show it).
                     if (expertMode && !isAggregate && currentServer != null && visibleTabs.isNotEmpty()) {
                         IconButton(onClick = {
+                            if (!hideMode) moveToEditableTab()
                             editMode = if (hideMode) EditMode.NONE else EditMode.HIDE
                         }) {
                             Icon(
@@ -444,8 +455,11 @@ fun MainScreen(
 
                 else -> Column(Modifier.fillMaxSize()) {
                     // While assigning, a tonal bar (distinct colour = MD mode feedback) holds the active
-                    // target zone chips + the "show only unassigned" toggle. It sits above all tabs.
-                    if (assignMode) {
+                    // target zone chips + the "show only unassigned" toggle. On a non-editable tab (live
+                    // controls) it gives way to a hint pointing at the type tabs.
+                    if ((assignMode || hideMode) && !onEditableTab) {
+                        EditTabHint(visibleTabs.filter { it.isEditable }.map { it.label })
+                    } else if (assignMode) {
                         AssignmentBar(
                             zones = zoneConfig.zones,
                             activeZoneId = activeZoneId,
@@ -456,8 +470,9 @@ fun MainScreen(
                             nameFilter = assignFilter,
                             onSetNameFilter = { assignFilter = it },
                         )
+                    } else if (hideMode) {
+                        HideModeBar()
                     }
-                    if (hideMode) HideModeBar()
                     HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                         when (visibleTabs[page]) {
                             Tab.HOME -> HomeScreen(
@@ -575,6 +590,23 @@ private fun RowScope.ZoneNavItem(zone: Zone, selected: Boolean, onClick: () -> U
         icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
         label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
+}
+
+/** Shown instead of the assign/hide bar on a tab whose tiles stay live controls (Otthon, Termosztát). */
+@Composable
+private fun EditTabHint(editableTabs: List<String>) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            if (editableTabs.isEmpty()) "Ezen a fülön a csempék kapcsolnak, itt nincs mit szerkeszteni."
+            else "Ezen a fülön a csempék kapcsolnak. Lapozz egy típus-fülre: ${editableTabs.joinToString()}.",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
 }
 
 /** A thin tonal hint bar shown above the tabs while visibility mode is on (MD mode feedback). */
