@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +20,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -35,7 +38,7 @@ import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -53,6 +56,8 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -72,8 +77,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.drop
@@ -99,7 +104,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     PCA("PCA", Icons.Filled.Lightbulb),
     COVERS("Redőny", Icons.Filled.Blinds),
     DIMMERS("Dimmerek", Icons.Filled.Tune),
-    SENSORS("Szenzorok", Icons.Filled.Thermostat),
+    SENSORS("Szenzor", Icons.Filled.Sensors),
     CONTROLLED("Termosztát", Icons.Filled.DeviceThermostat),
 }
 
@@ -305,6 +310,11 @@ fun MainScreen(
         }
     }
 
+    // Landscape (wider than tall): the per-server type tabs move to a side rail.
+    val config = LocalConfiguration.current
+    val useRail = config.screenWidthDp > config.screenHeightDp &&
+        !isAggregate && currentServer != null && visibleTabs.isNotEmpty()
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -367,7 +377,7 @@ fun MainScreen(
                         }) {
                             Icon(
                                 if (hideMode) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                contentDescription = if (hideMode) "Láthatóság mód kikapcsolása" else "Entitások elrejtése",
+                                contentDescription = if (hideMode) "Láthatóság mód kikapcsolása" else "Eszközök elrejtése",
                                 tint = if (hideMode) MaterialTheme.colorScheme.primary
                                 else LocalContentColor.current,
                             )
@@ -388,21 +398,39 @@ fun MainScreen(
                         onSelectPage = { page -> scope.launch { aggregatePagerState.animateScrollToPage(page) } },
                     )
                 }
-            } else if (visibleTabs.isNotEmpty()) {
+            } else if (currentServer != null && visibleTabs.isNotEmpty() && !useRail) {
                 NavigationBar {
                     visibleTabs.forEachIndexed { index, t ->
                         NavigationBarItem(
                             selected = selectedIndex == index,
                             onClick = { onSelectTab(t.name) },
                             icon = { Icon(t.icon, contentDescription = t.label) },
-                            label = { Text(t.label) },
+                            label = { Text(t.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
                 }
             }
         },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
+        Row(Modifier.padding(padding).fillMaxSize()) {
+        if (useRail) {
+            // Landscape: a side rail instead of the bottom bar, so the content keeps the full height.
+            // Scrolls because seven items can exceed the short landscape height.
+            NavigationRail(
+                modifier = Modifier.fillMaxHeight().verticalScroll(rememberScrollState()),
+                windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+            ) {
+                visibleTabs.forEachIndexed { index, t ->
+                    NavigationRailItem(
+                        selected = selectedIndex == index,
+                        onClick = { onSelectTab(t.name) },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxHeight()) {
             when {
                 isAggregate -> AggregateHomeScreen(
                     zones = globalZones,
@@ -504,7 +532,7 @@ fun MainScreen(
                             Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 PwmControlTile(it, actions, controlsEnabled)
                             }
-                            Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Thermostat, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Sensors, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 SensorTile(it.name, formatSensor(it))
                             }
                             Tab.CONTROLLED -> ControlledList(ui.state, actions, controlsEnabled, expertMode, homeExclude)
@@ -512,6 +540,7 @@ fun MainScreen(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -521,7 +550,7 @@ private fun ServerState.isEmpty() =
 
 private fun statusLine(ui: MyioUiState): String = when (ui.status) {
     ConnectionStatus.Connecting -> "Kapcsolódás…"
-    ConnectionStatus.Connected -> ui.info?.let { "${it.serial} · v${it.version}" } ?: "Kapcsolódva"
+    ConnectionStatus.Connected -> "Kapcsolódva"
     ConnectionStatus.Error -> "Hiba: ${ui.error ?: "ismeretlen"}"
 }
 
@@ -748,21 +777,32 @@ private fun ServerTitle(
     isAggregate: Boolean = false,
     showAggregate: Boolean = false,
     onSelectAggregate: () -> Unit = {},
-    aggregateStatus: ConnectionStatus = ConnectionStatus.Connected,
+    aggregateStatus: ConnectionStatus? = ConnectionStatus.Connected,
 ) {
     var open by remember { mutableStateOf(false) }
     // Openable if there's more than one real server, or the aggregate is offered as an extra choice.
     val switchable = servers.size > 1 || showAggregate
-    val dotStatus = if (isAggregate) aggregateStatus else ui.status
+    // null = nothing to connect to (no server / no polled server yet): no dot, no fake "connecting".
+    val dotStatus: ConnectionStatus? = when {
+        isAggregate -> aggregateStatus
+        current == null -> null
+        else -> ui.status
+    }
     val titleText = if (isAggregate) "Otthon (összes)" else current?.name ?: "myIO Home KT"
-    val subtitle = if (isAggregate) "Összevont vezérlés" else statusLine(ui)
+    val subtitle = when {
+        isAggregate -> if (aggregateStatus == null) "Még nincs zónázott eszköz" else "Összevont vezérlés"
+        current == null -> "Nincs szerver beállítva"
+        else -> statusLine(ui)
+    }
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = if (switchable) Modifier.clickable { open = true } else Modifier,
         ) {
-            StatusDot(dotStatus)
-            Spacer(Modifier.width(8.dp))
+            if (dotStatus != null) {
+                StatusDot(dotStatus)
+                Spacer(Modifier.width(8.dp))
+            }
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -812,10 +852,10 @@ private fun ServerTitle(
 
 /**
  * A single connection dot for the aggregate header: Connected only if every polled server is connected,
- * Error if any errored, otherwise Connecting (empty map → Connecting until the first poll lands).
+ * Error if any errored, otherwise Connecting (empty map → null: nothing to show a status for).
  */
-private fun aggregateStatus(perServer: Map<String, MyioUiState>): ConnectionStatus = when {
-    perServer.isEmpty() -> ConnectionStatus.Connecting
+private fun aggregateStatus(perServer: Map<String, MyioUiState>): ConnectionStatus? = when {
+    perServer.isEmpty() -> null
     perServer.values.any { it.status == ConnectionStatus.Error } -> ConnectionStatus.Error
     perServer.values.all { it.status == ConnectionStatus.Connected } -> ConnectionStatus.Connected
     else -> ConnectionStatus.Connecting
@@ -824,8 +864,8 @@ private fun aggregateStatus(perServer: Map<String, MyioUiState>): ConnectionStat
 @Composable
 private fun StatusDot(status: ConnectionStatus) {
     val color = when (status) {
-        ConnectionStatus.Connecting -> Color(0xFFFFB300)
-        ConnectionStatus.Connected -> Color(0xFF2E7D32)
+        ConnectionStatus.Connecting -> MaterialTheme.colorScheme.tertiary
+        ConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
         ConnectionStatus.Error -> MaterialTheme.colorScheme.error
     }
     Surface(color = color, shape = CircleShape, modifier = Modifier.size(10.dp).clip(CircleShape)) {}
