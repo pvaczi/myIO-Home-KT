@@ -53,9 +53,7 @@ class MyioHttpClient(
      * "PCA*2005=128", "fet*1=200", "g_INV=501".
      */
     suspend fun sendCommand(body: String): Unit = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("$base/")
-            .header("Authorization", authHeader)
+        val request = baseRequest("$base/", authHeader)
             .post(body.toRequestBody())
             .build()
         client.newCall(request).execute().use { resp ->
@@ -64,9 +62,7 @@ class MyioHttpClient(
     }
 
     private suspend fun get(path: String): String = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("$base$path")
-            .header("Authorization", authHeader)
+        val request = baseRequest("$base$path", authHeader)
             .get()
             .build()
         client.newCall(request).execute().use { resp ->
@@ -80,5 +76,15 @@ class MyioHttpClient(
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .build()
+
+        /**
+         * Base request: auth + `Connection: close`, so OkHttp drops the socket after the exchange instead of
+         * pooling it — an idle keep-alive connection would hold one of the W5100's four sockets (the bridge
+         * sends the same header).
+         */
+        internal fun baseRequest(url: String, authHeader: String): Request.Builder = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader)
+            .header("Connection", "close")
     }
 }
