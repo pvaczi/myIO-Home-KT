@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.navigation.compose.NavHost
@@ -49,6 +50,10 @@ class MainActivity : ComponentActivity() {
 
     // Set when the app is opened on a shared settings file (ACTION_VIEW); drives the replace dialog.
     private var importPrompt by mutableStateOf<ImportPrompt?>(null)
+
+    // The running shared-file read; a newer VIEW intent cancels it, so a slower earlier read can't overwrite
+    // the newer file's dialog.
+    private var importJob: Job? = null
 
     // Server slots live in DataStore (SettingsStore). A fresh install starts empty (discovery-first):
     // the user scans the LAN or adds slots by hand. The active one is switchable from the top-bar title.
@@ -242,7 +247,9 @@ class MainActivity : ComponentActivity() {
     private fun handleViewIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
-        lifecycleScope.launch {
+        importJob?.cancel()
+        importJob = lifecycleScope.launch {
+            // withContext re-checks cancellation on return, so a superseded read never publishes.
             val backup = withContext(Dispatchers.IO) {
                 SettingsSharing.readText(this@MainActivity, uri)?.let { SettingsBackup.decode(it) }
             }
