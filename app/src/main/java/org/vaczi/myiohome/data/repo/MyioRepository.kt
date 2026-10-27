@@ -9,6 +9,7 @@ import org.vaczi.myiohome.data.net.DeviceGate
 import org.vaczi.myiohome.data.net.MyioHttpClient
 import org.vaczi.myiohome.data.net.MyioIndexParser
 import org.vaczi.myiohome.data.net.Perm
+import org.vaczi.myiohome.data.net.PollBackoff
 import org.vaczi.myiohome.data.net.ServerConfig
 
 /**
@@ -126,6 +127,15 @@ class MyioRepository(
             // one cancelled while still waiting for the lock never reached it → it doesn't.
             if (attempted) gate.lastPostAtMs = System.currentTimeMillis()
         }
+    }
+
+    /**
+     * POST several command fragments for this server: joined with '&', split into bodies of at most
+     * [PollBackoff.MAX_BODY_CHARS] characters (never splitting a fragment), each body one paced
+     * [sendCommand], strictly in order. The first failed body ends the batch (the exception propagates).
+     */
+    suspend fun sendCommands(fragments: List<String>) {
+        for (body in PollBackoff.chunk(fragments)) sendCommand(body)
     }
 
     private fun cacheNames(s: ServerState) {

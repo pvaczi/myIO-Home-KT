@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.data.local.CoverStore
 import org.vaczi.myiohome.data.local.MyioServer
@@ -45,7 +46,9 @@ import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.ServerInfo
 import org.vaczi.myiohome.data.model.ServerState
 import org.vaczi.myiohome.data.net.DiscoveredServer
+import org.vaczi.myiohome.data.net.HttpStatusException
 import org.vaczi.myiohome.data.net.MyioCommands
+import org.vaczi.myiohome.data.net.PollBackoff
 import org.vaczi.myiohome.data.net.MyioDiscovery
 import org.vaczi.myiohome.data.net.ServerConfig
 import org.vaczi.myiohome.data.repo.MyioRepository
@@ -392,8 +395,14 @@ class MyioViewModel(
      * next tick when it returns. Driven by [ProcessLifecycleOwner] (app-level, ignores config changes).
      */
     private val foreground = MutableStateFlow(true)
+    // Bumped to cut a poll loop's wait short (and reset its failure backoff): foreground return, [retryNow].
+    private val wake = MutableStateFlow(0)
+
+    /** Poll now: wakes every poll loop out of its (possibly long backoff) wait and resets the backoff. */
+    fun retryNow() { wake.update { it + 1 } }
+
     private val lifecycleObserver = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) { foreground.value = true }
+        override fun onStart(owner: LifecycleOwner) { foreground.value = true; retryNow() }
         override fun onStop(owner: LifecycleOwner) { foreground.value = false }
     }
 
@@ -567,11 +576,15 @@ class MyioViewModel(
         var refreshed = false
         var lastMetaAttemptMs = 0L
         var lastSnapshotMs = 0L
+        var failures = 0 // consecutive failed polls → backoff + offline state (see [PollBackoff])
+        var nextDelayMs = 0L
         while (true) {
             foreground.first { it } // park while backgrounded → no polling when nobody's watching
             try {
                 val gen = currentGen()
                 val state = repo.poll()
+                failures = 0
+                nextDelayMs = pollIntervalMsFor(serverId)
                 if (gen == currentGen() && !sending()) {
                     emit { it.copy(status = ConnectionStatus.Connected, state = state, error = null) }
                     val now = System.currentTimeMillis()
@@ -598,9 +611,25 @@ class MyioViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emit { it.copy(status = ConnectionStatus.Error, error = e.message ?: e.toString()) }
+                failures++
+                nextDelayMs = PollBackoff.nextDelayMs(failures, (e as? HttpStatusException)?.retryAfterSec?.let { it * 1_000L })
+                // The first failures are treated as a blip (status unchanged); from the third on the server
+                // is offline and the error shows when the next attempt comes.
+                if (PollBackoff.isOffline(failures)) {
+                    val msg = e.message ?: e.toString()
+                    emit {
+                        it.copy(
+                            status = ConnectionStatus.Error,
+                            error = "Nem elérhető ($msg) – újrapróba ${nextDelayMs / 1_000} s múlva",
+                        )
+                    }
+                }
             }
-            delay(pollIntervalMsFor(serverId))
+            // Sleep until the next attempt, but a wake-up (app back in the foreground, manual retry) cuts the
+            // wait short and clears the backoff so the user is never stuck behind a long delay.
+            val seenWake = wake.value
+            withTimeoutOrNull(nextDelayMs) { wake.first { it != seenWake } }
+            if (wake.value != seenWake) failures = 0
         }
     }
 
@@ -745,6 +774,21 @@ class MyioViewModel(
             sendOn(captured, bodies, bumpGen = {
                 if (aggregateRepos[serverId] === captured) aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1
             }) { aggregateRepos[serverId] === captured }
+        }
+    }
+
+    /**
+     * Batch of command [fragments] (e.g. `PCA_ON=2046`) for ONE server ([serverId] = the active single
+     * server or an aggregate server): joined with '&', split into bodies of at most
+     * [PollBackoff.MAX_BODY_CHARS] characters, sent in order with the usual pacing and guards. No
+     * optimistic update — the caller applies its own. Unknown / no longer current server → dropped.
+     */
+    fun sendCommands(serverId: String, fragments: List<String>) {
+        val bodies = PollBackoff.chunk(fragments).toTypedArray()
+        if (bodies.isEmpty()) return
+        when {
+            serverId == activeId -> singleTarget.send(*bodies)
+            aggregateRepos.containsKey(serverId) -> aggregateTarget(serverId).send(*bodies)
         }
     }
 

@@ -3,7 +3,7 @@ package org.vaczi.myiohome.data.net
 import org.vaczi.myiohome.data.model.CoverOutputType
 
 /**
- * Builds the myIO control command bodies POSTed to `/` (see `MyIO/AGENTS.md` "Vezérlő parancsok").
+ * Builds the myIO control command bodies POSTed to `/info.json` (see `MyIO/AGENTS.md` "Vezérlő parancsok").
  *
  * id conventions:
  *  - relays: 1-based device id (matches the domain id directly)
