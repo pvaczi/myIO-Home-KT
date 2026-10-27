@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -24,8 +25,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -88,6 +87,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -635,14 +635,14 @@ private fun statusLine(ui: MyioUiState): String = when (ui.status) {
 }
 
 // Aggregate bottom nav: with few zones all fit; beyond [MAX_INLINE_ZONES] the bar would cram the labels
-// unreadably small, so we show only the [ZONE_CHUNK]-sized window containing the current selection and
-// page through the rest with ‹/› items. The active zone's name is still shown above the tiles.
+// unreadably small, so the zones go into a horizontally scrollable strip [VISIBLE_ZONES] items wide — the
+// half item cut off at the edge hints that it scrolls. Scrolling never changes the selection; a tap does.
 private const val MAX_INLINE_ZONES = 4
-private const val ZONE_CHUNK = 3
+private const val VISIBLE_ZONES = 3.5f
 
 /**
- * The "Otthon (összes)" bottom nav: a fixed "Összes" summary item plus the global zones. Many zones are
- * windowed (see above) so labels stay legible. [onSelectPage] takes a pager page index (0 = summary,
+ * The "Otthon (összes)" bottom nav: a fixed "Összes" summary item plus the global zones. Many zones
+ * scroll (see above) so labels stay legible. [onSelectPage] takes a pager page index (0 = summary,
  * i+1 = zones[i]).
  */
 @Composable
@@ -663,28 +663,30 @@ private fun AggregateBottomBar(
                 ZoneNavItem(zone, selected = pagerState.currentPage == i + 1, onClick = { onSelectPage(i + 1) })
             }
         } else {
-            // Window = the chunk of zones holding the current selection; ‹/› jump a chunk at a time.
-            val selectedZone = (pagerState.currentPage - 1).coerceAtLeast(0)
-            val start = (selectedZone / ZONE_CHUNK) * ZONE_CHUNK
-            val end = minOf(start + ZONE_CHUNK, zones.size)
-            if (start > 0) {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = { onSelectPage(start - ZONE_CHUNK + 1) },
-                    icon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Előző zónák") },
-                    label = { Text("…") },
-                )
-            }
-            for (i in start until end) {
-                ZoneNavItem(zones[i], selected = pagerState.currentPage == i + 1, onClick = { onSelectPage(i + 1) })
-            }
-            if (end < zones.size) {
-                NavigationBarItem(
-                    selected = false,
-                    onClick = { onSelectPage(end + 1) },
-                    icon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "További zónák") },
-                    label = { Text("…") },
-                )
+            // The strip's weight makes every zone item as wide as the "Összes" item next to it.
+            BoxWithConstraints(Modifier.weight(VISIBLE_ZONES)) {
+                val itemWidth = maxWidth / VISIBLE_ZONES
+                val itemPx = with(LocalDensity.current) { itemWidth.toPx() }
+                val viewportPx = constraints.maxWidth
+                val scroll = rememberScrollState()
+                // Keep the selected zone in view when it changes elsewhere (pager swipe, "Összes" tap).
+                val selectedZone = pagerState.currentPage - 1
+                LaunchedEffect(selectedZone, itemPx, viewportPx) {
+                    if (selectedZone < 0) return@LaunchedEffect
+                    val left = (selectedZone * itemPx).toInt()
+                    val right = left + itemPx.toInt()
+                    when {
+                        left < scroll.value -> scroll.animateScrollTo(left)
+                        right > scroll.value + viewportPx -> scroll.animateScrollTo(right - viewportPx)
+                    }
+                }
+                Row(Modifier.horizontalScroll(scroll)) {
+                    zones.forEachIndexed { i, zone ->
+                        Row(Modifier.width(itemWidth)) {
+                            ZoneNavItem(zone, selected = selectedZone == i, onClick = { onSelectPage(i + 1) })
+                        }
+                    }
+                }
             }
         }
     }
