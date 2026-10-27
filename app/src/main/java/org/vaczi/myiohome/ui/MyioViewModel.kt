@@ -44,6 +44,8 @@ import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.local.ZoneConfig
+import org.vaczi.myiohome.data.local.ZoneOrder
+import org.vaczi.myiohome.data.local.memberRef
 import org.vaczi.myiohome.data.local.ZoneStore
 import org.vaczi.myiohome.data.model.Cover
 import org.vaczi.myiohome.data.model.CoverDetection
@@ -191,10 +193,22 @@ class MyioViewModel(
         combine(settings.selected, allAssignments) { s, all -> s?.let { all[it.id] } ?: ZoneAssignments() }
             .stateIn(viewModelScope, SharingStarted.Eagerly, ZoneAssignments())
 
-    /** Combined zone view for the selected server's UI (global zones + that server's assignment). */
-    val zoneConfig: StateFlow<ZoneConfig> = combine(globalZones, selectedAssignments) { zs, a ->
-        ZoneConfig(zones = zs, assignments = a.assignments, memberOrder = a.memberOrder)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, ZoneConfig())
+    /** The global per-zone member order (zoneId → "<serverId>|<outputKey>" refs) — shared by both views. */
+    val zoneOrder: StateFlow<Map<String, List<String>>> =
+        zones.zoneOrder.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /**
+     * Combined zone view for the selected server's UI: global zones + that server's assignment + the global
+     * order filtered to that server (so the single-server view agrees with the aggregate one).
+     */
+    val zoneConfig: StateFlow<ZoneConfig> =
+        combine(globalZones, selectedAssignments, zoneOrder, settings.selected) { zs, a, order, sel ->
+            ZoneConfig(
+                zones = zs,
+                assignments = a.assignments,
+                memberOrder = sel?.let { ZoneOrder.forServer(order, it.id) } ?: emptyMap(),
+            )
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, ZoneConfig())
 
     // --- Covers (shutters): detected from the selected server's protection pairs + per-server overrides ---
 
@@ -290,28 +304,32 @@ class MyioViewModel(
         viewModelScope.launch { zones.updateZones { list -> list.movedOneStep(up) { it.id == id } ?: list } }
     }
 
-    /** Persist a zone's member ordering for the selected server (the UI computes the new order). */
-    fun setZoneMemberOrder(zoneId: String, orderedKeys: List<String>) {
-        editAssignments { it.copy(memberOrder = it.memberOrder + (zoneId to orderedKeys)) }
+    /**
+     * Move the member at [index] of the displayed [refs] (`"<serverId>|<outputKey>"`, in display order) one
+     * step up/down inside zone [zoneId]'s global order. Aggregate view: the whole zone; atomic in the store.
+     */
+    fun moveZoneMemberRefs(zoneId: String, refs: List<String>, index: Int, up: Boolean) {
+        viewModelScope.launch {
+            zones.updateOrder { m ->
+                val moved = ZoneOrder.move(m[zoneId], refs, index, up) ?: return@updateOrder m
+                m + (zoneId to moved)
+            }
+        }
+    }
+
+    /** Single-server variant of [moveZoneMemberRefs]: [keys] are the selected server's displayed output keys. */
+    fun moveZoneMember(zoneId: String, keys: List<String>, index: Int, up: Boolean) {
+        val id = currentServer.value?.id ?: return
+        moveZoneMemberRefs(zoneId, keys.map { memberRef(id, it) }, index, up)
     }
 
     /** Toggle whether [outputKey] belongs to [zoneId] on the selected server; many-to-many. */
     fun toggleZoneAssignment(outputKey: String, zoneId: String) {
-        editAssignments { a ->
-            val current = a.assignments[outputKey] ?: emptyList()
-            val updated = if (zoneId in current) current - zoneId else current + zoneId
-            val assignments = a.assignments.toMutableMap().apply {
-                if (updated.isEmpty()) remove(outputKey) else put(outputKey, updated)
-            }
-            a.copy(assignments = assignments)
-        }
-    }
-
-    private fun editAssignments(transform: (ZoneAssignments) -> ZoneAssignments) {
         val id = currentServer.value?.id ?: return
         // Atomic transform inside the store (reads the freshly-persisted value) so two quick assignment
-        // edits — a common tap-tap in assign mode — don't clobber each other via a stale snapshot.
-        viewModelScope.launch { zones.updateAssignments(id, transform) }
+        // edits — a common tap-tap in assign mode — don't clobber each other via a stale snapshot. A
+        // removal also prunes the member from the zone's global order.
+        viewModelScope.launch { zones.toggleAssignment(id, outputKey, zoneId) }
     }
 
     // --- LAN discovery --------------------------------------------------------------------------
@@ -441,6 +459,13 @@ class MyioViewModel(
             }
         }
         observeAggregate()
+        // One-time migration of the legacy per-server member orders into the global order (idempotent;
+        // re-runs when the slot list changes, e.g. after an import).
+        viewModelScope.launch {
+            settings.servers.map { list -> list.map { it.id } }.distinctUntilChanged().collect { ids ->
+                if (ids.isNotEmpty()) zones.migrateLegacyOrder(ids)
+            }
+        }
         // In non-expert (locked) mode the active slot may be one the owner hid: the switcher won't list
         // it, so steer off it to the safe aggregate (or the first visible slot) rather than leave its
         // per-server control screen showing. Settles immediately once redirected (aggregate → sel null).
@@ -507,6 +532,7 @@ class MyioViewModel(
         assignments = allAssignments.value,
         coverOverrides = allCoverOverrides.value,
         scenes = scenes.value,
+        zoneOrder = zoneOrder.value,
     )
 
     /**
@@ -518,7 +544,7 @@ class MyioViewModel(
         viewModelScope.launch {
             settings.setTheme(backup.theme)
             settings.saveServers(backup.servers)
-            zones.replaceAll(backup.zones, backup.assignments)
+            zones.replaceAll(backup.zones, backup.assignments, backup.zoneOrder, backup.servers.map { it.id })
             coverStore.replaceAll(backup.coverOverrides)
             sceneStore.replaceAll(backup.scenes)
             settings.selectServer(backup.servers.firstOrNull()?.id ?: "")
@@ -539,6 +565,7 @@ class MyioViewModel(
         viewModelScope.launch {
             var remaining: List<MyioServer> = emptyList()
             settings.updateServers { list -> list.filterNot { it.id == server.id }.also { remaining = it } }
+            zones.pruneServerOrder(server.id)
             if (currentServer.value?.id == server.id) settings.selectServer(remaining.firstOrNull()?.id ?: "")
         }
     }

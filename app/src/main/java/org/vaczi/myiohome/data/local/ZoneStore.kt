@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 
 /** A user-named zone (tag). Zones are **global** (shared across servers); outputs are assigned to them
  * per server (see [ZoneAssignments]). Outputs are assigned many-to-many. */
@@ -20,8 +21,9 @@ data class Zone(val id: String = java.util.UUID.randomUUID().toString(), val nam
 /**
  * One server's output→zones assignment. [assignments] maps an output key (see `outputKey()`) to the
  * global zone ids it belongs to; an output may be in several zones. [memberOrder] holds, per zone id,
- * a custom ordering of that server's member output keys (keys absent from it keep their default order
- * at the end). Zone ids reference the **global** zone registry ([Zone]).
+ * a custom ordering of that server's member output keys. **Legacy**: read only to migrate into the
+ * global order ([ZoneStore.zoneOrder]) and no longer written. Zone ids reference the **global** zone
+ * registry ([Zone]).
  */
 @Serializable
 data class ZoneAssignments(
@@ -102,8 +104,75 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
     }
 
     /**
-     * Delete a global zone and strip it from **every** server's assignments + member order, atomically.
-     * [serverIds] are the configured server slots whose assignment blobs must be cleaned.
+     * The **global** per-zone member order (`zoneId → ordered "<serverId>|<outputKey>" refs`, see
+     * [memberRef]). Source of truth for the in-zone order in both the aggregate and the single-server view.
+     */
+    val zoneOrder: Flow<Map<String, List<String>>> =
+        dataStore.data.map { it[ZONE_ORDER] }.distinctUntilChanged().map { parseOrder(it) }
+
+    /** Atomically read-modify-write the global zone order. */
+    suspend fun updateOrder(transform: (Map<String, List<String>>) -> Map<String, List<String>>) {
+        dataStore.edit { writeOrder(it, transform(parseOrder(it[ZONE_ORDER]))) }
+    }
+
+    /**
+     * Toggle whether [outputKey] belongs to [zoneId] on [serverId] (many-to-many). Removing the member
+     * also prunes its ref from the zone's global order — in the same transaction.
+     */
+    suspend fun toggleAssignment(serverId: String, outputKey: String, zoneId: String) {
+        dataStore.edit { prefs ->
+            val a = parseAssignments(prefs[assignKey(serverId)])
+            val current = a.assignments[outputKey] ?: emptyList()
+            val removing = zoneId in current
+            val updated = if (removing) current - zoneId else current + zoneId
+            val assignments = a.assignments.toMutableMap().apply {
+                if (updated.isEmpty()) remove(outputKey) else put(outputKey, updated)
+            }
+            prefs[assignKey(serverId)] =
+                StoreJson.encodeToString(ZoneAssignments.serializer(), a.copy(assignments = assignments))
+            if (removing) {
+                val ref = memberRef(serverId, outputKey)
+                val order = parseOrder(prefs[ZONE_ORDER])
+                if (order[zoneId]?.contains(ref) == true) {
+                    writeOrder(prefs, order + (zoneId to order.getValue(zoneId).filterNot { it == ref }))
+                }
+            }
+        }
+    }
+
+    /** Drop every order ref of a deleted server (assignments stay, so an undo of the delete still applies). */
+    suspend fun pruneServerOrder(serverId: String) {
+        updateOrder { ZoneOrder.prune(it) { ref -> memberRefServer(ref) == serverId } }
+    }
+
+    /**
+     * One-time, idempotent migration of the legacy per-server `memberOrder`s into the global order (see
+     * [ZoneOrder.migrate]); [serverIds] are the configured slots in slot order. The legacy field is cleared
+     * afterwards (it is no longer written), so it cannot resurrect a pruned order.
+     */
+    suspend fun migrateLegacyOrder(serverIds: List<String>) {
+        dataStore.edit { migrateInto(it, serverIds) }
+    }
+
+    private fun migrateInto(prefs: androidx.datastore.preferences.core.MutablePreferences, serverIds: List<String>) {
+        val legacy = serverIds.associateWith { parseAssignments(prefs[assignKey(it)]) }
+        val withLegacy = legacy.filterValues { it.memberOrder.isNotEmpty() }
+        if (withLegacy.isEmpty()) return
+        val existing = parseOrder(prefs[ZONE_ORDER])
+        val merged = ZoneOrder.migrate(existing, serverIds, withLegacy.mapValues { it.value.memberOrder })
+        if (merged != existing) writeOrder(prefs, merged)
+        for ((sid, a) in withLegacy) {
+            prefs[assignKey(sid)] = StoreJson.encodeToString(ZoneAssignments.serializer(), a.copy(memberOrder = emptyMap()))
+        }
+    }
+
+    private fun writeOrder(prefs: androidx.datastore.preferences.core.MutablePreferences, order: Map<String, List<String>>) {
+        prefs[ZONE_ORDER] = StoreJson.encodeToString(order)
+    }
+
+    /**
+     * Delete a global zone and strip it from **every** server's assignments (and its global member order),
+     * atomically. [serverIds] are the configured server slots whose assignment blobs must be cleaned.
      */
     suspend fun deleteZone(zoneId: String, serverIds: List<String>) {
         dataStore.edit { prefs ->
@@ -111,6 +180,7 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
                 zonesSerializer,
                 parseZones(prefs[ZONES_GLOBAL]).filterNot { it.id == zoneId },
             )
+            writeOrder(prefs, parseOrder(prefs[ZONE_ORDER]) - zoneId)
             for (id in serverIds) {
                 val a = parseAssignments(prefs[assignKey(id)])
                 val assignments = a.assignments
@@ -126,16 +196,25 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
 
     /**
      * Replace the entire zone configuration atomically (used when importing a shared settings backup):
-     * write the global zone list and each server's assignments, after dropping **every** existing
-     * `assign_*` blob so assignments belonging to no-longer-present servers don't linger as orphans.
+     * write the global zone list, the global member [order] and each server's assignments, after dropping
+     * **every** existing `assign_*` blob so assignments belonging to no-longer-present servers don't linger
+     * as orphans. An old backup (no [order], legacy per-server `memberOrder`s) is migrated in the same
+     * transaction using [serverIds] as the slot order.
      */
-    suspend fun replaceAll(zones: List<Zone>, assignmentsByServer: Map<String, ZoneAssignments>) {
+    suspend fun replaceAll(
+        zones: List<Zone>,
+        assignmentsByServer: Map<String, ZoneAssignments>,
+        order: Map<String, List<String>> = emptyMap(),
+        serverIds: List<String> = assignmentsByServer.keys.toList(),
+    ) {
         dataStore.edit { prefs ->
             prefs.asMap().keys.filter { it.name.startsWith("assign_") }.forEach { prefs.remove(it) }
             prefs[ZONES_GLOBAL] = StoreJson.encodeToString(zonesSerializer, zones)
+            writeOrder(prefs, order)
             for ((serverId, value) in assignmentsByServer) {
                 prefs[assignKey(serverId)] = StoreJson.encodeToString(ZoneAssignments.serializer(), value)
             }
+            migrateInto(prefs, serverIds)
         }
     }
 
@@ -151,7 +230,11 @@ class ZoneStore(private val dataStore: DataStore<Preferences>) {
     companion object {
         private val ZONES_GLOBAL = stringPreferencesKey("zones_global")
         private val HIDE_ZONED = booleanPreferencesKey("hide_zoned")
+        private val ZONE_ORDER = stringPreferencesKey("zone_order")
         private val zonesSerializer = kotlinx.serialization.builtins.ListSerializer(Zone.serializer())
+
+        /** Pure parse of the global member order — null/blank/corrupt → empty map. */
+        fun parseOrder(blob: String?): Map<String, List<String>> = decodeOrDefault(blob, emptyMap())
 
         /** Pure parse — null/blank/corrupt → empty list. Unit-testable without DataStore. */
         fun parseZones(blob: String?): List<Zone> = decodeOrDefault(blob, emptyList())

@@ -165,7 +165,10 @@ fun MainScreen(
     onRenameZone: (id: String, name: String) -> Unit = { _, _ -> },
     onDeleteZone: (String) -> Unit = {},
     onMoveZone: (id: String, up: Boolean) -> Unit = { _, _ -> },
-    onReorderZoneMembers: (zoneId: String, orderedKeys: List<String>) -> Unit = { _, _ -> },
+    onReorderZoneMembers: (zoneId: String, displayedKeys: List<String>, index: Int, up: Boolean) -> Unit = { _, _, _, _ -> },
+    // Global per-zone member order (zoneId → "<serverId>|<outputKey>" refs) + the aggregate-view mover.
+    zoneMemberOrder: Map<String, List<String>> = emptyMap(),
+    onMoveAggregateMember: (zoneId: String, displayedRefs: List<String>, index: Int, up: Boolean) -> Unit = { _, _, _, _ -> },
     // Covers (shutters): detected from protection pairs; their member outputs are hidden from the PCA/Relé tabs.
     covers: List<Cover> = emptyList(),
     onCoverOpen: (Cover) -> Unit = {},
@@ -508,6 +511,8 @@ fun MainScreen(
                     onRenameZone = onRenameZone,
                     onDeleteZone = onDeleteZone,
                     onMoveZone = onMoveZone,
+                    memberOrder = zoneMemberOrder,
+                    onMoveMember = onMoveAggregateMember,
                 )
 
                 currentServer == null ->

@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
                 val isAggregate by viewModel.isAggregate.collectAsStateWithLifecycle()
                 val aggregate by viewModel.aggregate.collectAsStateWithLifecycle()
                 val globalZones by viewModel.globalZones.collectAsStateWithLifecycle()
+                val zoneOrder by viewModel.zoneOrder.collectAsStateWithLifecycle()
                 val allAssignments by viewModel.allAssignments.collectAsStateWithLifecycle()
                 val aggregateCovers by viewModel.aggregateCovers.collectAsStateWithLifecycle()
                 val aggregateDisabledMembers by viewModel.aggregateDisabledMembers.collectAsStateWithLifecycle()
@@ -185,7 +186,9 @@ class MainActivity : ComponentActivity() {
                             onRenameZone = viewModel::renameZone,
                             onDeleteZone = viewModel::deleteZone,
                             onMoveZone = viewModel::moveZone,
-                            onReorderZoneMembers = viewModel::setZoneMemberOrder,
+                            onReorderZoneMembers = viewModel::moveZoneMember,
+                            zoneMemberOrder = zoneOrder,
+                            onMoveAggregateMember = viewModel::moveZoneMemberRefs,
                             covers = covers,
                             onCoverOpen = viewModel::coverOpen,
                             onCoverClose = viewModel::coverClose,

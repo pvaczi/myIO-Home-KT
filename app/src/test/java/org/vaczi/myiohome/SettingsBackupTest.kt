@@ -114,6 +114,22 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun roundTripsGlobalZoneOrder() {
+        val order = mapOf("z1" to listOf("s1|R1", "s2|C2001", "s1|P2005"))
+        val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), zoneOrder = order)
+        assertEquals(order, SettingsBackup.decode(blob)!!.zoneOrder)
+    }
+
+    @Test
+    fun oldBackupWithoutZoneOrderDecodesEmptyAndKeepsLegacyOrder() {
+        val old = """{"format":"myio-home-settings","version":1,"theme":"GREEN","servers":[],"zones":[],""" +
+            """"assignments":{"s1":{"assignments":{"R1":["z1"]},"memberOrder":{"z1":["R1"]}}}}"""
+        val decoded = SettingsBackup.decode(old)!!
+        assertEquals(emptyMap<String, List<String>>(), decoded.zoneOrder)
+        assertEquals(mapOf("z1" to listOf("R1")), decoded.assignments["s1"]!!.memberOrder)
+    }
+
+    @Test
     fun emptyConfigRoundTrips() {
         val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap())
         val decoded = SettingsBackup.decode(blob)!!

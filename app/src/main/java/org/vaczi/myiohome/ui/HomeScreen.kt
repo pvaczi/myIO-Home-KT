@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -44,6 +43,8 @@ import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.local.ZoneConfig
+import org.vaczi.myiohome.data.local.ZoneOrder
+import org.vaczi.myiohome.data.local.memberRef
 import org.vaczi.myiohome.data.model.Cover as ModelCover
 import org.vaczi.myiohome.data.model.PcaOutput
 import org.vaczi.myiohome.data.model.PwmOutput
@@ -75,7 +76,8 @@ fun HomeScreen(
     onRenameZone: (id: String, name: String) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
-    onReorderMembers: (zoneId: String, orderedKeys: List<String>) -> Unit,
+    /** Move member [index] of [displayedKeys] one step up/down (global order, filtered to this server). */
+    onReorderMembers: (zoneId: String, displayedKeys: List<String>, index: Int, up: Boolean) -> Unit,
     /** Active server's id + group-action callbacks (zone "Mind be/ki…"); gated by [enabled] like the tiles. */
     serverId: String = "",
     groupActions: GroupActions = GroupActions(),
@@ -148,11 +150,7 @@ fun HomeScreen(
                                 name = tile.name,
                                 isFirst = i == 0,
                                 isLast = i == members.lastIndex,
-                                onMove = { up ->
-                                    val keys = members.map { it.key }.toMutableList()
-                                    keys.add(if (up) i - 1 else i + 1, keys.removeAt(i))
-                                    onReorderMembers(zone.id, keys)
-                                },
+                                onMove = { up -> onReorderMembers(zone.id, members.map { it.key }, i, up) },
                             )
                         }
                     }
@@ -200,10 +198,10 @@ private fun ZoneEmptyText() {
  * by room, not by which physical device a switch lives on. Each tile routes its commands to its owning
  * server ([actionsFor]) and is enabled only while that server is connected. No "Besorolatlan" section.
  *
- * [reorderMode] turns the summary page into a compact zone-order editor (up/down arrows on the global
- * zone headers, member tiles hidden). Only the **global zone order** is editable here — within-zone
- * member order is stored per server and can't be interleaved across servers, so that stays on the
- * per-server Otthon tab.
+ * [reorderMode] turns the summary page into a compact order editor: up/down arrows on the global zone
+ * headers and, under each, the zone's members as name rows with up/down arrows. A zone's member order is
+ * **global** ([memberOrder], refs `"<serverId>|<outputKey>"`), so servers' members interleave freely and
+ * the per-server Otthon tab shows the same order filtered to its server.
  */
 @Composable
 fun AggregateHomeScreen(
@@ -226,6 +224,9 @@ fun AggregateHomeScreen(
     groupActions: GroupActions = GroupActions(),
     sceneActions: SceneActions = SceneActions(),
     expertMode: Boolean = false,
+    /** Global per-zone member order (zoneId → member refs) and its mover (see [memberRef]). */
+    memberOrder: Map<String, List<String>> = emptyMap(),
+    onMoveMember: (zoneId: String, displayedRefs: List<String>, index: Int, up: Boolean) -> Unit = { _, _, _, _ -> },
 ) {
     if (zones.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
@@ -238,9 +239,9 @@ fun AggregateHomeScreen(
         // The active page's name above the tiles: the bottom nav only windows a few zones at a time, so
         // the current zone isn't always legible there. Reads currentPage → updates live while swiping.
         val pageZone = zones.getOrNull(pagerState.currentPage - 1)
-        val pageParts = remember(pageZone, servers, perServer, assignments, coversByServer, hiddenByServer) {
+        val pageParts = remember(pageZone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder) {
             pageZone?.let {
-                aggregateGroupParts(aggregateZoneMembers(it, servers, perServer, assignments, coversByServer, hiddenByServer), perServer, coversByServer)
+                aggregateGroupParts(aggregateZoneMembers(it, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder), perServer, coversByServer)
             }.orEmpty()
         }
         AggregatePageTitle(
@@ -250,12 +251,12 @@ fun AggregateHomeScreen(
         )
         HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) {
-                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, groupActions, sceneActions, expertMode)
+                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, onMoveMember, groupActions, sceneActions, expertMode)
             } else {
                 // Page index 1..n maps to zones[0..n-1]; guard against a transient out-of-range page while
                 // a zone is being deleted (the pager's page count updates a frame later).
                 zones.getOrNull(page - 1)?.let { zone ->
-                    AggregateZoneGrid(zone, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor)
+                    AggregateZoneGrid(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder, actionsFor, coverActionsFor)
                 }
             }
         }
@@ -281,8 +282,8 @@ private fun AggregatePageTitle(title: String, groupParts: List<ZoneGroupPart>, g
 
 /**
  * Summary page: every global zone in one scrolling grid with collapsible headers (rename/delete menu).
- * While [reorderMode] is on, the headers become up/down arrow rows (global zone order) and the member
- * tiles are hidden — only the zone order is editable in the aggregate view.
+ * While [reorderMode] is on, the headers become up/down arrow rows (global zone order) and each zone's
+ * members become name rows with up/down arrows (global member order, servers interleaved).
  */
 @Composable
 private fun AggregateSummaryGrid(
@@ -292,21 +293,23 @@ private fun AggregateSummaryGrid(
     assignments: Map<String, ZoneAssignments>,
     coversByServer: Map<String, List<ModelCover>>,
     hiddenByServer: Map<String, Set<String>>,
+    memberOrder: Map<String, List<String>>,
     actionsFor: (serverId: String) -> MyioActions,
     coverActionsFor: (serverId: String) -> CoverActions,
     reorderMode: Boolean,
     onRenameZone: (id: String, name: String) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
+    onMoveMember: (zoneId: String, displayedRefs: List<String>, index: Int, up: Boolean) -> Unit,
     groupActions: GroupActions,
     sceneActions: SceneActions,
     expertMode: Boolean,
 ) {
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
-    // Per-zone server groups, computed once so re-collapsing/expanding a section doesn't re-merge state.
-    val membersByZone = remember(zones, servers, perServer, assignments, coversByServer, hiddenByServer) {
+    // Per-zone merged members, computed once so re-collapsing/expanding a section doesn't re-merge state.
+    val membersByZone = remember(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder) {
         zones.associate { zone ->
-            zone.id to aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer)
+            zone.id to aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder)
         }
     }
     TwoColumnLazyGrid {
@@ -328,15 +331,26 @@ private fun AggregateSummaryGrid(
                 groupParts = aggregateGroupParts(membersByZone[zone.id].orEmpty(), perServer, coversByServer),
                 groupActions = groupActions,
             )
-            // Member tiles hidden while reordering zones (only the global zone order is editable here).
-            if (!reorderMode && !isCollapsed) {
-                val groups = membersByZone[zone.id].orEmpty()
-                if (groups.isEmpty()) {
+            if (!isCollapsed) {
+                val members = membersByZone[zone.id].orEmpty()
+                if (members.isEmpty()) {
                     item(key = "e/${zone.id}", span = { GridItemSpan(maxLineSpan) }) {
                         ZoneEmptyText()
                     }
+                } else if (reorderMode) {
+                    val refs = members.map { memberRef(it.serverId, it.tile.key) }
+                    members.forEachIndexed { i, m ->
+                        item(key = "r/${zone.id}/${m.serverId}/${m.tile.key}", span = { GridItemSpan(maxLineSpan) }) {
+                            ReorderMemberRow(
+                                name = m.tile.name,
+                                isFirst = i == 0,
+                                isLast = i == members.lastIndex,
+                                onMove = { up -> onMoveMember(zone.id, refs, i, up) },
+                            )
+                        }
+                    }
                 } else {
-                    aggregateMemberItems(zone.id, groups, actionsFor, coverActionsFor)
+                    aggregateMemberItems(zone.id, members, actionsFor, coverActionsFor)
                 }
             }
         }
@@ -352,26 +366,27 @@ private fun AggregateZoneGrid(
     assignments: Map<String, ZoneAssignments>,
     coversByServer: Map<String, List<ModelCover>>,
     hiddenByServer: Map<String, Set<String>>,
+    memberOrder: Map<String, List<String>>,
     actionsFor: (serverId: String) -> MyioActions,
     coverActionsFor: (serverId: String) -> CoverActions,
 ) {
-    val groups = remember(zone, servers, perServer, assignments, coversByServer, hiddenByServer) {
-        aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer)
+    val members = remember(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder) {
+        aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder)
     }
-    if (groups.isEmpty()) {
+    if (members.isEmpty()) {
         EmptyListHint("Nincs eszköz ebben a zónában")
         return
     }
     TwoColumnLazyGrid {
-        aggregateMemberItems(zone.id, groups, actionsFor, coverActionsFor)
+        aggregateMemberItems(zone.id, members, actionsFor, coverActionsFor)
     }
 }
 
 /**
- * Merge a zone's members across every server (slot order), each server's own saved order applied within
- * its slice. Grouped **per server** (one non-empty list per contributing server) so callers can render a
- * divider between servers without re-deriving the grouping from a flat list. Tile keys carry the server
- * id — output keys aren't unique across servers (two devices can both have R3).
+ * Merge a zone's members across every server into ONE list in the zone's global order ([memberOrder]);
+ * members without a saved position go to the end in the default order (servers in slot order, each
+ * server's tiles in their stable default order). Tile keys carry the server id — output keys aren't
+ * unique across servers (two devices can both have R3).
  */
 private fun aggregateZoneMembers(
     zone: Zone,
@@ -380,27 +395,27 @@ private fun aggregateZoneMembers(
     assignments: Map<String, ZoneAssignments>,
     coversByServer: Map<String, List<ModelCover>>,
     hiddenByServer: Map<String, Set<String>>,
-): List<List<AggMember>> = servers.mapNotNull { server ->
-    val ui = perServer[server.id] ?: return@mapNotNull null
-    val asn = assignments[server.id] ?: return@mapNotNull null
-    val hidden = hiddenByServer[server.id] ?: emptySet()
-    val covers = coversByServer[server.id] ?: emptyList()
-    val raw = homeTilesFor(ui.state, covers) { zone.id in (asn.assignments[it] ?: emptyList()) && it !in hidden }
-    val byKey = raw.associateBy { it.key }
-    val ordered = ZoneConfig(memberOrder = asn.memberOrder)
-        .orderedMembers(zone.id, raw.map { it.key })
-        .mapNotNull { byKey[it] }
-    val connected = ui.status == ConnectionStatus.Connected
-    ordered.map { AggMember(server.id, it, connected) }
-}.filter { it.isNotEmpty() }
+    memberOrder: Map<String, List<String>>,
+): List<AggMember> {
+    val byRef = LinkedHashMap<String, AggMember>()
+    for (server in servers) {
+        val ui = perServer[server.id] ?: continue
+        val asn = assignments[server.id] ?: continue
+        val hidden = hiddenByServer[server.id] ?: emptySet()
+        val covers = coversByServer[server.id] ?: emptyList()
+        val connected = ui.status == ConnectionStatus.Connected
+        homeTilesFor(ui.state, covers) { zone.id in (asn.assignments[it] ?: emptyList()) && it !in hidden }
+            .forEach { byRef[memberRef(server.id, it.key)] = AggMember(server.id, it, connected) }
+    }
+    return ZoneOrder.sort(memberOrder[zone.id], byRef.keys.toList()).mapNotNull { byRef[it] }
+}
 
-/** Per-server group-control slices of one zone's merged [groups] (eligible members of each server). */
+/** Per-server group-control slices of one zone's merged [members] (eligible members of each server). */
 private fun aggregateGroupParts(
-    groups: List<List<AggMember>>,
+    members: List<AggMember>,
     perServer: Map<String, MyioUiState>,
     coversByServer: Map<String, List<ModelCover>>,
-): List<ZoneGroupPart> = groups.mapNotNull { g ->
-    val sid = g.firstOrNull()?.serverId ?: return@mapNotNull null
+): List<ZoneGroupPart> = members.groupBy { it.serverId }.mapNotNull { (sid, g) ->
     val st = perServer[sid]?.state ?: return@mapNotNull null
     ZoneGroupPart(sid, groupMembers(st, coversByServer[sid].orEmpty(), g.map { it.tile.key }.toSet()), g.first().enabled)
 }
@@ -665,23 +680,17 @@ private fun LazyGridScope.zoneHeaderItem(
 }
 
 /**
- * Render a zone's per-server member [groups]: a divider between servers, then each group's tiles.
- * Shared by the aggregate summary page (one section per zone) and a single zone's page. [keyPrefix]
- * (the zone id) keeps grid-item keys unique when this is called once per zone in the same [LazyGridScope]
- * (the summary page renders every zone in one grid).
+ * Render a zone's merged [members] in their (global) order. Shared by the aggregate summary page (one
+ * section per zone) and a single zone's page. [keyPrefix] (the zone id) keeps grid-item keys unique when
+ * this is called once per zone in the same [LazyGridScope] (the summary page renders every zone in one grid).
  */
 private fun LazyGridScope.aggregateMemberItems(
     keyPrefix: String,
-    groups: List<List<AggMember>>,
+    members: List<AggMember>,
     actionsFor: (serverId: String) -> MyioActions,
     coverActionsFor: (serverId: String) -> CoverActions,
 ) {
-    groups.forEachIndexed { i, group ->
-        if (i > 0) item(key = "$keyPrefix/div/$i", span = { GridItemSpan(maxLineSpan) }) {
-            HorizontalDivider(Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
-        }
-        gridItems(group, key = { "$keyPrefix/${it.serverId}/${it.tile.key}" }) { m ->
-            HomeTileCell(m.tile, actionsFor(m.serverId), coverActionsFor(m.serverId), m.enabled)
-        }
+    gridItems(members, key = { "$keyPrefix/${it.serverId}/${it.tile.key}" }) { m ->
+        HomeTileCell(m.tile, actionsFor(m.serverId), coverActionsFor(m.serverId), m.enabled)
     }
 }

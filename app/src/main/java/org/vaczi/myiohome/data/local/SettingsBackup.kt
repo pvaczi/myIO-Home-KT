@@ -31,6 +31,9 @@ data class SettingsBackup(
     val coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
     // Global scenes. Additive/optional: older backups that lack it decode to an empty list.
     val scenes: List<Scene> = emptyList(),
+    // Global per-zone member order (zoneId → "<serverId>|<outputKey>" refs). Additive/optional: older
+    // backups lack it and carry the legacy per-server `memberOrder`s instead, migrated on import.
+    val zoneOrder: Map<String, List<String>> = emptyMap(),
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -49,6 +52,7 @@ data class SettingsBackup(
             assignments: Map<String, ZoneAssignments>,
             coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
             scenes: List<Scene> = emptyList(),
+            zoneOrder: Map<String, List<String>> = emptyMap(),
         ): String = json.encodeToString(
             serializer(),
             // forSharing() swaps in each slot's optional share credentials (e.g. family) so the exporter
@@ -60,6 +64,7 @@ data class SettingsBackup(
                 assignments = assignments,
                 coverOverrides = coverOverrides,
                 scenes = scenes,
+                zoneOrder = zoneOrder,
             ),
         )
 
