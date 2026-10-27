@@ -73,6 +73,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -177,10 +178,14 @@ fun MainScreen(
     // Per-server detected covers + their open/close/stop callbacks for the aggregate dashboard.
     aggregateCovers: Map<String, List<Cover>> = emptyMap(),
     aggregateCoverActionsFor: (serverId: String) -> CoverActions = { CoverActions() },
+    // Zone group control (Mind be/ki/fel/le/stop, közös fényerő), routed by server id.
+    groupActions: GroupActions = GroupActions(),
 ) {
     // The active editing mode is ephemeral UI state (not persisted). One enum keeps the three modes
     // (assign / reorder / visibility) mutually exclusive by construction.
     var editMode by remember { mutableStateOf(EditMode.NONE) }
+    // Full-screen output search (name/type/id + "Csak a bekapcsoltak"); Back closes it.
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     var activeZoneId by remember { mutableStateOf<String?>(null) }
     // Live name filter for assign mode; cleared whenever assign mode is left so it never lingers.
     var assignFilter by remember { mutableStateOf("") }
@@ -318,6 +323,29 @@ fun MainScreen(
         if (isAggregate) globalZones.isNotEmpty() else currentServer != null && visibleTabs.isNotEmpty()
         )
 
+    if (searchOpen) {
+        // Hidden outputs/servers are excluded regardless of expert mode; aggregate = every polled server.
+        val searchSources = if (isAggregate) {
+            servers.filter { !it.hidden && it.id in aggregatePerServer }.map { s ->
+                val per = aggregatePerServer.getValue(s.id)
+                SearchSource(
+                    s.id, per.state, aggregateCovers[s.id].orEmpty(),
+                    expandHiddenForDisabledCovers(s.hiddenOutputs.toSet(), aggregateDisabledMembers[s.id].orEmpty()),
+                    per.status == ConnectionStatus.Connected,
+                )
+            }
+        } else {
+            listOfNotNull(currentServer?.let { SearchSource(it.id, ui.state, covers, hiddenKeys, controlsEnabled) })
+        }
+        SearchScreen(
+            sources = searchSources,
+            actionsFor = if (isAggregate) aggregateActionsFor else { _ -> actions },
+            coverActionsFor = if (isAggregate) aggregateCoverActionsFor else { _ -> coverActions },
+            onClose = { searchOpen = false },
+        )
+        return
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -335,6 +363,11 @@ fun MainScreen(
                     )
                 },
                 actions = {
+                    if ((isAggregate && aggregatePerServer.isNotEmpty()) || (!isAggregate && currentServer != null)) {
+                        IconButton(onClick = { searchOpen = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Keresés")
+                        }
+                    }
                     // Editing tools (reorder / assign / visibility) are expert-only — a non-expert locked
                     // view shows just the controls and the gear, so nothing can be rearranged by accident.
                     // Reorder toggle: per-server HOME tab (zones + within-zone members get up/down arrows),
@@ -449,6 +482,7 @@ fun MainScreen(
                     coversByServer = aggregateCovers,
                     coverActionsFor = aggregateCoverActionsFor,
                     hiddenByServer = aggregateHiddenByServer,
+                    groupActions = groupActions,
                     actionsFor = aggregateActionsFor,
                     pagerState = aggregatePagerState,
                     reorderMode = reorderMode,
@@ -526,6 +560,8 @@ fun MainScreen(
                                 onDeleteZone = onDeleteZone,
                                 onMoveZone = onMoveZone,
                                 onReorderMembers = onReorderZoneMembers,
+                                serverId = currentServer?.id.orEmpty(),
+                                groupActions = groupActions,
                             )
                             Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 RelayControlTile(it, actions, controlsEnabled)

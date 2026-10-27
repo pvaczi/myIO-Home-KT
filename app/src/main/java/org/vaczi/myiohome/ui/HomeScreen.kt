@@ -76,6 +76,9 @@ fun HomeScreen(
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     onReorderMembers: (zoneId: String, orderedKeys: List<String>) -> Unit,
+    /** Active server's id + group-action callbacks (zone "Mind be/ki…"); gated by [enabled] like the tiles. */
+    serverId: String = "",
+    groupActions: GroupActions = GroupActions(),
 ) {
     if (zoneConfig.zones.isEmpty()) {
         EmptyZones(onAddZone)
@@ -97,6 +100,13 @@ fun HomeScreen(
         val remainder = allTiles.filter { !zoneConfig.isAssigned(it.key) }
         perZone to remainder
     }
+    // Eligible group-control members per zone (writable, non-cover-endpoint, not thermostat-driven).
+    val groupParts = remember(perZoneMembers, state, covers, serverId, enabled) {
+        zones.associate { zone ->
+            val keys = perZoneMembers[zone.id].orEmpty().map { it.key }.toSet()
+            zone.id to listOf(ZoneGroupPart(serverId, groupMembers(state, covers, keys), enabled))
+        }
+    }
     TwoColumnLazyGrid {
         zones.forEachIndexed { index, zone ->
             val members = perZoneMembers[zone.id].orEmpty()
@@ -112,6 +122,8 @@ fun HomeScreen(
                 onRenameZone = onRenameZone,
                 onDeleteZone = onDeleteZone,
                 onMoveZone = onMoveZone,
+                groupParts = groupParts[zone.id].orEmpty(),
+                groupActions = groupActions,
             )
             if (!isCollapsed) {
                 if (members.isEmpty()) {
@@ -201,6 +213,7 @@ fun AggregateHomeScreen(
     coverActionsFor: (serverId: String) -> CoverActions = { CoverActions() },
     /** Per-server output keys to exclude (non-expert hidden sets); empty in expert mode. */
     hiddenByServer: Map<String, Set<String>> = emptyMap(),
+    groupActions: GroupActions = GroupActions(),
 ) {
     if (zones.isEmpty()) {
         EmptyZones(onAddZone)
@@ -209,13 +222,20 @@ fun AggregateHomeScreen(
     Column(Modifier.fillMaxSize()) {
         // The active page's name above the tiles: the bottom nav only windows a few zones at a time, so
         // the current zone isn't always legible there. Reads currentPage → updates live while swiping.
+        val pageZone = zones.getOrNull(pagerState.currentPage - 1)
+        val pageParts = remember(pageZone, servers, perServer, assignments, coversByServer, hiddenByServer) {
+            pageZone?.let {
+                aggregateGroupParts(aggregateZoneMembers(it, servers, perServer, assignments, coversByServer, hiddenByServer), perServer, coversByServer)
+            }.orEmpty()
+        }
         AggregatePageTitle(
-            if (pagerState.currentPage == 0) "Összes"
-            else zones.getOrNull(pagerState.currentPage - 1)?.name ?: "",
+            if (pagerState.currentPage == 0) "Összes" else pageZone?.name ?: "",
+            pageParts,
+            groupActions,
         )
         HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) {
-                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone)
+                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, groupActions)
             } else {
                 // Page index 1..n maps to zones[0..n-1]; guard against a transient out-of-range page while
                 // a zone is being deleted (the pager's page count updates a frame later).
@@ -229,15 +249,19 @@ fun AggregateHomeScreen(
 
 /** Title above the aggregate tiles naming the current page ("Összes" or the zone) — mirrors a zone header. */
 @Composable
-private fun AggregatePageTitle(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.primary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
-    )
+private fun AggregatePageTitle(title: String, groupParts: List<ZoneGroupPart>, groupActions: GroupActions) {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // A zone page carries the group controls (the "Összes" page has none: its zone headers do).
+        ZoneGroupBar(groupParts, groupActions, menuDescription = "Csoportos vezérlés")
+    }
 }
 
 /**
@@ -259,6 +283,7 @@ private fun AggregateSummaryGrid(
     onRenameZone: (id: String, name: String) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
+    groupActions: GroupActions,
 ) {
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     // Per-zone server groups, computed once so re-collapsing/expanding a section doesn't re-merge state.
@@ -280,6 +305,8 @@ private fun AggregateSummaryGrid(
                 onRenameZone = onRenameZone,
                 onDeleteZone = onDeleteZone,
                 onMoveZone = onMoveZone,
+                groupParts = aggregateGroupParts(membersByZone[zone.id].orEmpty(), perServer, coversByServer),
+                groupActions = groupActions,
             )
             // Member tiles hidden while reordering zones (only the global zone order is editable here).
             if (!reorderMode && !isCollapsed) {
@@ -347,6 +374,17 @@ private fun aggregateZoneMembers(
     ordered.map { AggMember(server.id, it, connected) }
 }.filter { it.isNotEmpty() }
 
+/** Per-server group-control slices of one zone's merged [groups] (eligible members of each server). */
+private fun aggregateGroupParts(
+    groups: List<List<AggMember>>,
+    perServer: Map<String, MyioUiState>,
+    coversByServer: Map<String, List<ModelCover>>,
+): List<ZoneGroupPart> = groups.mapNotNull { g ->
+    val sid = g.firstOrNull()?.serverId ?: return@mapNotNull null
+    val st = perServer[sid]?.state ?: return@mapNotNull null
+    ZoneGroupPart(sid, groupMembers(st, coversByServer[sid].orEmpty(), g.map { it.tile.key }.toSet()), g.first().enabled)
+}
+
 /** One aggregate-dashboard tile: a zone member tagged with its owning server + that server's reachability. */
 private data class AggMember(val serverId: String, val tile: HomeTile, val enabled: Boolean)
 
@@ -391,8 +429,9 @@ private fun ZoneHeader(
     onToggleCollapse: () -> Unit,
     onRenameZone: (id: String, name: String) -> Unit,
     onDeleteZone: (String) -> Unit,
+    groupParts: List<ZoneGroupPart>,
+    groupActions: GroupActions,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     Row(
@@ -412,20 +451,15 @@ private fun ZoneHeader(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Box {
-            IconButton(onClick = { menuOpen = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "Zóna kezelése")
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("Átnevezés") },
-                    onClick = { menuOpen = false; showRename = true },
-                )
-                DropdownMenuItem(
-                    text = { Text("Törlés") },
-                    onClick = { menuOpen = false; showDelete = true },
-                )
-            }
+        ZoneGroupBar(groupParts, groupActions) { close ->
+            DropdownMenuItem(
+                text = { Text("Átnevezés") },
+                onClick = { close(); showRename = true },
+            )
+            DropdownMenuItem(
+                text = { Text("Törlés") },
+                onClick = { close(); showDelete = true },
+            )
         }
     }
     if (showRename) {
@@ -532,7 +566,7 @@ private fun MoveArrows(isFirst: Boolean, isLast: Boolean, onMove: (up: Boolean) 
 }
 
 /** A renderable member of a zone section, tagged by domain type; [key] is stable within a server. */
-private sealed interface HomeTile {
+internal sealed interface HomeTile {
     val key: String
     val name: String
     data class Relay(val o: RelayOutput) : HomeTile { override val key get() = o.outputKey(); override val name get() = o.name }
@@ -547,7 +581,7 @@ private sealed interface HomeTile {
  * sensors). [covers] are added as their own tiles, and their member up/down outputs are excluded from the
  * relay/PCA tiles (a shutter shows once, not as its two raw motors — mirrors the dedicated Redőny tab).
  */
-private fun homeTilesFor(
+internal fun homeTilesFor(
     state: ServerState,
     covers: List<ModelCover> = emptyList(),
     include: (String) -> Boolean,
@@ -561,7 +595,7 @@ private fun homeTilesFor(
 }
 
 @Composable
-private fun HomeTileCell(tile: HomeTile, actions: MyioActions, coverActions: CoverActions, enabled: Boolean) = when (tile) {
+internal fun HomeTileCell(tile: HomeTile, actions: MyioActions, coverActions: CoverActions, enabled: Boolean) = when (tile) {
     is HomeTile.Relay -> RelayControlTile(tile.o, actions, enabled)
     is HomeTile.Pca -> PcaControlTile(tile.o, actions, enabled)
     is HomeTile.Pwm -> PwmControlTile(tile.o, actions, enabled)
@@ -585,6 +619,8 @@ private fun LazyGridScope.zoneHeaderItem(
     onRenameZone: (id: String, name: String) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
+    groupParts: List<ZoneGroupPart>,
+    groupActions: GroupActions,
 ) {
     item(key = "h/${zone.id}", span = { GridItemSpan(maxLineSpan) }) {
         if (reorderMode) {
@@ -601,6 +637,8 @@ private fun LazyGridScope.zoneHeaderItem(
                 onToggleCollapse = onToggleCollapse,
                 onRenameZone = onRenameZone,
                 onDeleteZone = onDeleteZone,
+                groupParts = groupParts,
+                groupActions = groupActions,
             )
         }
     }

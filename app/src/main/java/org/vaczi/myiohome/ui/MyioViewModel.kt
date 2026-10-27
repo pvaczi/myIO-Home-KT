@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.vaczi.myiohome.data.local.AppTheme
+import org.vaczi.myiohome.ui.GroupControl.withLevel
+import org.vaczi.myiohome.ui.GroupControl.withOnOff
 import org.vaczi.myiohome.data.local.CoverStore
 import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.local.SettingsBackup
@@ -926,6 +928,44 @@ class MyioViewModel(
     private fun ControlTarget.coverStop(c: Cover) {
         optimistic { it.driveCover(c, up = false, down = false) }
         send(MyioCommands.coverStop(c.type, c.upId, c.downId))
+    }
+
+    // Zone group control: ONE optimistic update + ONE batched send per server ([sendCommands]). The UI
+    // passes only eligible members (see [groupMembers]) of a connected server; an unknown / no longer
+    // current server id is dropped. Works for the active single server and for aggregate servers alike.
+    private fun targetFor(serverId: String): ControlTarget? = when {
+        serverId == activeId -> singleTarget
+        aggregateRepos.containsKey(serverId) -> aggregateTarget(serverId)
+        else -> null
+    }
+
+    /** "Mind be" / "Mind ki" for a zone's switchable members. */
+    fun groupSwitch(serverId: String, members: GroupMembers, on: Boolean) {
+        val target = targetFor(serverId) ?: return
+        val fragments = GroupControl.onOffFragments(members, on)
+        if (fragments.isEmpty()) return
+        target.optimistic { it.withOnOff(members, on) }
+        sendCommands(serverId, fragments)
+    }
+
+    /** "Mind fel" / "Mind le" / "Mind stop" for a zone's covers. */
+    fun groupCovers(serverId: String, covers: List<Cover>, move: CoverMove) {
+        val target = targetFor(serverId) ?: return
+        val fragments = GroupControl.coverFragments(covers, move)
+        if (fragments.isEmpty()) return
+        target.optimistic { st ->
+            covers.fold(st) { s, c -> s.driveCover(c, up = move == CoverMove.OPEN, down = move == CoverMove.CLOSE) }
+        }
+        sendCommands(serverId, fragments)
+    }
+
+    /** "Közös fényerő": one brightness (0..255) for every dimmable member. */
+    fun groupLevel(serverId: String, members: GroupMembers, level: Int) {
+        val target = targetFor(serverId) ?: return
+        val fragments = GroupControl.levelFragments(members, level)
+        if (fragments.isEmpty()) return
+        target.optimistic { it.withLevel(members, level) }
+        sendCommands(serverId, fragments)
     }
 
     // Public single-server handlers (MainActivity wires these to the UI callbacks).

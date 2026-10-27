@@ -33,6 +33,7 @@ import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.ZoneStore
 import org.vaczi.myiohome.ui.AppSettingsScreen
 import org.vaczi.myiohome.ui.CoverActions
+import org.vaczi.myiohome.ui.GroupActions
 import org.vaczi.myiohome.ui.MainScreen
 import org.vaczi.myiohome.ui.MyioActions
 import org.vaczi.myiohome.ui.MyioViewModel
@@ -118,6 +119,12 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                val groupActions = GroupActions(
+                    onSwitch = { sid, m, on -> viewModel.groupSwitch(sid, m, on) },
+                    onCovers = { sid, c, move -> viewModel.groupCovers(sid, c, move) },
+                    onLevel = { sid, m, level -> viewModel.groupLevel(sid, m, level) },
+                )
+
                 NavHost(navController = navController, startDestination = "home") {
                     composable("home") {
                         MainScreen(
@@ -167,6 +174,7 @@ class MainActivity : ComponentActivity() {
                             aggregateActionsFor = aggregateActionsFor,
                             aggregateCovers = aggregateCovers,
                             aggregateCoverActionsFor = aggregateCoverActionsFor,
+                            groupActions = groupActions,
                         )
                     }
                     composable("settings") {
