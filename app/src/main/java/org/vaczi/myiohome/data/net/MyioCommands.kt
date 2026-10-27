@@ -46,7 +46,8 @@ object MyioCommands {
     /**
      * PCA turn-on / turn-off temperature (`PCA_temp_MIN*x` / `PCA_temp_MAX*x`). Proven on hardware (3.7.5.1,
      * 2026.10.27): `PCA_temp_MIN*11` rewrote the `sensorON` of PCA 2011 and no neighbour, so x = id − 2000 —
-     * do not "fix" it to the raw id the manufacturer's app sends. MAX → `sensorOFF` by symmetry, not measured.
+     * do not "fix" it to the raw id shown in the manufacturer's `myIO_REST_API.md` example (`PCA_temp_MIN*2003`); the
+     * manufacturer's app and webUI send the 1-based index too. MAX → `sensorOFF` by symmetry, not measured.
      */
     fun pcaThermostatOn(id: Int, tenths: Int): String = "PCA_temp_MIN*${pcaIndex(id)}=$tenths"
     fun pcaThermostatOff(id: Int, tenths: Int): String = "PCA_temp_MAX*${pcaIndex(id)}=$tenths"
