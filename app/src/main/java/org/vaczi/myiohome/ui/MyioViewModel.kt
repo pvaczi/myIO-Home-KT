@@ -362,6 +362,7 @@ class MyioViewModel(
     /** Scan [subnet] (first three octets) for myIO servers; [user]/[password] try to fetch names. */
     fun startDiscovery(subnet: String, user: String, password: String) {
         discoveryJob?.cancel()
+        if (!networkAllowed.value) return // no local-network permission → a scan would only time out
         val run = ++discoveryRun
         _discoveryState.value = DiscoveryState(running = true, total = 254)
         discoveryJob = viewModelScope.launch {
@@ -439,6 +440,18 @@ class MyioViewModel(
      * next tick when it returns. Driven by [ProcessLifecycleOwner] (app-level, ignores config changes).
      */
     private val foreground = MutableStateFlow(true)
+    /**
+     * Whether LAN access is allowed (Android 17 local-network permission, see [LocalNetworkGate]). Starts
+     * closed; the activity opens it once the gate says so (immediately on Android < 17). Poll loops park and
+     * discovery refuses to start while closed, so a missing permission never produces timeout/backoff errors.
+     */
+    private val networkAllowed = MutableStateFlow(false)
+
+    fun setNetworkAllowed(allowed: Boolean) {
+        networkAllowed.value = allowed
+        if (allowed) retryNow() else discoveryJob?.cancel()
+    }
+
     // Bumped to cut a poll loop's wait short (and reset its failure backoff): foreground return, [retryNow].
     private val wake = MutableStateFlow(0)
 
@@ -669,6 +682,7 @@ class MyioViewModel(
         var nextDelayMs = 0L
         while (true) {
             foreground.first { it } // park while backgrounded → no polling when nobody's watching
+            networkAllowed.first { it } // park while the local-network permission is missing
             try {
                 val gen = currentGen()
                 val state = repo.poll()

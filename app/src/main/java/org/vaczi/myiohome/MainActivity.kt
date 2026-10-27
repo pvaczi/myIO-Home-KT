@@ -2,7 +2,17 @@ package org.vaczi.myiohome
 
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import org.vaczi.myiohome.ui.LocalNetworkGate
+import org.vaczi.myiohome.ui.LocalNetworkGateScreen
+import org.vaczi.myiohome.ui.openAppSettings
 import androidx.activity.SystemBarStyle
 import android.os.SystemClock
 import androidx.compose.runtime.LaunchedEffect
@@ -147,6 +157,31 @@ class MainActivity : FragmentActivity() {
                 LaunchedEffect(showLock) { if (appLockPref == true && locked) promptUnlock() }
                 if (showLock) {
                     LockScreen(onUnlock = ::promptUnlock)
+                    return@MyioHomeTheme
+                }
+                // Android 17 local-network permission: asked after the app lock, before any poll/discovery.
+                var granted by remember { mutableStateOf(LocalNetworkGate.isGranted(this@MainActivity)) }
+                var denied by rememberSaveable { mutableStateOf(false) }
+                var showRationale by rememberSaveable { mutableStateOf(false) }
+                // The user may grant it on the system settings page → re-check on every return.
+                LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { granted = LocalNetworkGate.isGranted(this@MainActivity) }
+                val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+                    granted = ok
+                    if (!ok) {
+                        denied = true
+                        showRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                            this@MainActivity, LocalNetworkGate.PERMISSION,
+                        )
+                    }
+                }
+                val gate = LocalNetworkGate.decide(Build.VERSION.SDK_INT, granted, denied, showRationale)
+                LaunchedEffect(gate) { viewModel.setNetworkAllowed(gate.allowsNetwork) }
+                if (!gate.allowsNetwork) {
+                    LocalNetworkGateScreen(
+                        gate = gate,
+                        onRequest = { permissionLauncher.launch(LocalNetworkGate.PERMISSION) },
+                        onOpenSettings = { openAppSettings(this@MainActivity) },
+                    )
                     return@MyioHomeTheme
                 }
                 val navController = rememberNavController()
