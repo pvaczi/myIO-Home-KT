@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Thermostat
@@ -73,6 +74,7 @@ import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.Sensor
 import org.vaczi.myiohome.data.model.SensorKind
+import org.vaczi.myiohome.data.model.outputKey
 import kotlin.math.roundToInt
 
 /**
@@ -102,6 +104,9 @@ data class HideUi(
     val hideMode: Boolean = false,
     val hiddenKeys: Set<String> = emptySet(),
     val onToggleHidden: (String) -> Unit = {},
+    /** Output keys of the current server that need an authentication to control (see AccessControl). */
+    val protectedKeys: Set<String> = emptySet(),
+    val onToggleProtected: (String) -> Unit = {},
 )
 
 /**
@@ -158,24 +163,24 @@ private fun <T> List<T>.filterHidden(hideUi: HideUi, expertMode: Boolean, key: (
 
 @Composable
 internal fun RelayControlTile(r: RelayOutput, actions: MyioActions, enabled: Boolean) =
-    LampTile(r.name, r.on, if (r.on) "BE" else "KI", Icons.Filled.Power, enabled && r.writable, !r.writable) {
+    LampTile(r.name, r.on, if (r.on) "BE" else "KI", Icons.Filled.Power, enabled && r.writable, !r.writable, r.outputKey() in actions.protectedKeys) {
         actions.onToggleRelay(r)
     }
 
 @Composable
 internal fun PcaControlTile(p: PcaOutput, actions: MyioActions, enabled: Boolean) =
     if (p.isPwm) {
-        DimmableLampTile(p.name, p.state, Icons.Filled.Lightbulb, enabled && p.writable, !p.writable,
+        DimmableLampTile(p.name, p.state, Icons.Filled.Lightbulb, enabled && p.writable, !p.writable, p.outputKey() in actions.protectedKeys,
             onToggle = { actions.onTogglePca(p) }, onSet = { actions.onSetPcaBrightness(p, it) })
     } else {
-        LampTile(p.name, p.on, if (p.on) "BE" else "KI", Icons.Filled.Lightbulb, enabled && p.writable, !p.writable) {
+        LampTile(p.name, p.on, if (p.on) "BE" else "KI", Icons.Filled.Lightbulb, enabled && p.writable, !p.writable, p.outputKey() in actions.protectedKeys) {
             actions.onTogglePca(p)
         }
     }
 
 @Composable
 internal fun PwmControlTile(d: PwmOutput, actions: MyioActions, enabled: Boolean) =
-    DimmableLampTile(d.name, d.state, Icons.Filled.Lightbulb, enabled && d.writable, !d.writable,
+    DimmableLampTile(d.name, d.state, Icons.Filled.Lightbulb, enabled && d.writable, !d.writable, d.outputKey() in actions.protectedKeys,
         onToggle = { actions.onTogglePwm(d) }, onSet = { actions.onSetPwmBrightness(d, it) })
 
 /** Callbacks for a cover tile. Editing callbacks are only invoked when [expert] and act via the ⋮ menu. */
@@ -186,6 +191,9 @@ data class CoverActions(
     val onSwap: (Cover) -> Unit = {},
     val onRename: (Cover, String) -> Unit = { _, _ -> },
     val onDisable: (Cover) -> Unit = {},
+    /** Cover keys that need an authentication to move; [onToggleProtected] flips one (expert menu). */
+    val protectedKeys: Set<String> = emptySet(),
+    val onToggleProtected: (Cover) -> Unit = {},
 )
 
 /**
@@ -219,6 +227,7 @@ internal fun CoverTile(cover: Cover, enabled: Boolean, expert: Boolean, actions:
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!cover.writable) LockBadge()
+                if (cover.outputKey() in actions.protectedKeys) ProtectBadge()
                 // Only shown while moving; a stopped shutter is already told by the container colour.
                 if (moving) {
                     Text(
@@ -241,6 +250,11 @@ internal fun CoverTile(cover: Cover, enabled: Boolean, expert: Boolean, actions:
                             DropdownMenuItem(
                                 text = { Text("Átnevezés…") },
                                 onClick = { menuOpen = false; renaming = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (cover.outputKey() in actions.protectedKeys) "Védelem kikapcsolása" else "Védett (hitelesítés kell)") },
+                                leadingIcon = { Icon(Icons.Filled.Shield, contentDescription = null) },
+                                onClick = { menuOpen = false; actions.onToggleProtected(cover) },
                             )
                             DropdownMenuItem(
                                 text = { Text("Nem redőny") },
@@ -350,6 +364,7 @@ private fun LampTile(
     icon: ImageVector,
     enabled: Boolean,
     locked: Boolean = false,
+    protectedBadge: Boolean = false,
     onToggle: () -> Unit,
 ) {
     Surface(
@@ -364,6 +379,7 @@ private fun LampTile(
                 Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.weight(1f))
                 if (locked) LockBadge()
+                if (protectedBadge) ProtectBadge()
                 Text(valueLabel, style = MaterialTheme.typography.labelLarge)
             }
             Spacer(Modifier.height(4.dp))
@@ -391,6 +407,7 @@ private fun DimmableLampTile(
     icon: ImageVector,
     enabled: Boolean,
     locked: Boolean = false,
+    protectedBadge: Boolean = false,
     onToggle: () -> Unit,
     onSet: (Int) -> Unit,
 ) {
@@ -416,6 +433,7 @@ private fun DimmableLampTile(
                 Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.weight(1f))
                 if (locked) LockBadge()
+                if (protectedBadge) ProtectBadge()
                 Text("${percent(shownState)}%", style = MaterialTheme.typography.labelLarge)
             }
             Text(
@@ -546,6 +564,7 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
 @Composable
 private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi) {
     val hidden = outputKey in hideUi.hiddenKeys
+    val protectedOut = outputKey in hideUi.protectedKeys
     Surface(
         // Edit-mode highlight is an outline, never a fill: a filled container reads as the "ON" of the live tiles.
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -569,6 +588,14 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            IconButton(onClick = { hideUi.onToggleProtected(outputKey) }, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.Shield,
+                    contentDescription = if (protectedOut) "Védett (hitelesítés kell)" else "Nem védett",
+                    tint = if (protectedOut) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             Spacer(Modifier.width(4.dp))
             Icon(
                 if (hidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
@@ -582,6 +609,16 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
 /** Selected-state outline of the assign / visibility edit tiles. */
 @Composable
 private fun editHighlightBorder() = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+
+/** Small shield shown on a tile whose control needs an authentication (per-output protection). */
+@Composable
+internal fun ProtectBadge() {
+    Icon(
+        Icons.Filled.Shield,
+        contentDescription = "Védett (hitelesítés kell)",
+        modifier = Modifier.size(16.dp).padding(end = 4.dp),
+    )
+}
 
 /** Small padlock shown on a tile the logged-in user may see but not control (no write permission). */
 @Composable

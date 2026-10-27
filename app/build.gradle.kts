@@ -81,6 +81,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.biometric)
+    // biometric 1.1.0 drags in fragment 1.2.x, which breaks registerForActivityResult (lint InvalidFragmentVersionForActivityResult).
+    implementation(libs.androidx.fragment)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

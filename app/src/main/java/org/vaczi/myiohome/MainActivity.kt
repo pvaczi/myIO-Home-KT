@@ -3,8 +3,19 @@ package org.vaczi.myiohome
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import android.os.SystemClock
+import androidx.compose.runtime.LaunchedEffect
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import org.vaczi.myiohome.data.local.AccessControl
+import org.vaczi.myiohome.data.local.memberRef
+import org.vaczi.myiohome.data.model.outputKey
+import org.vaczi.myiohome.ui.BiometricAuth
+import org.vaczi.myiohome.ui.GroupMembers
+import org.vaczi.myiohome.ui.LockScreen
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,7 +63,28 @@ private sealed interface ImportPrompt {
     object Invalid : ImportPrompt
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    // --- App lock + per-output protection (system authentication only; nothing is stored but the flags) ---
+    // Cold start begins locked; the content stays covered until the first DataStore read says otherwise.
+    private var locked by mutableStateOf(true)
+    private var promptActive = false
+    // SystemClock.elapsedRealtime() of the last successful authentication window end / of going to background.
+    private var unlockedUntil = 0L
+    private var backgroundedAt: Long? = null
+    // Actions waiting for the authentication; keyed so a slider drag keeps only its latest value.
+    private val pendingActions = LinkedHashMap<String, () -> Unit>()
+    private var pendingSeq = 0
+
+    private val processObserver = object : DefaultLifecycleObserver {
+        override fun onStop(owner: LifecycleOwner) { backgroundedAt = SystemClock.elapsedRealtime() }
+        override fun onStart(owner: LifecycleOwner) {
+            if (viewModel.appLock.value == true &&
+                AccessControl.shouldLockAfterBackground(backgroundedAt, SystemClock.elapsedRealtime())
+            ) locked = true
+            backgroundedAt = null
+        }
+    }
 
     // Set when the app is opened on a shared settings file (ACTION_VIEW); drives the replace dialog.
     private var importPrompt by mutableStateOf<ImportPrompt?>(null)
@@ -91,6 +123,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(processObserver)
         enableEdgeToEdge()
         // Only on a fresh start — on recreate (rotation) the same VIEW intent would re-prompt otherwise.
         if (savedInstanceState == null) handleViewIntent(intent)
@@ -107,6 +140,15 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             MyioHomeTheme(theme = theme) {
+                val appLockPref by viewModel.appLock.collectAsStateWithLifecycle()
+                LaunchedEffect(appLockPref) { if (appLockPref == false) locked = false }
+                val showLock = appLockPref == null || (appLockPref == true && locked)
+                // One automatic prompt per lock event; the button asks again after a cancel.
+                LaunchedEffect(showLock) { if (appLockPref == true && locked) promptUnlock() }
+                if (showLock) {
+                    LockScreen(onUnlock = ::promptUnlock)
+                    return@MyioHomeTheme
+                }
                 val navController = rememberNavController()
                 val ui by viewModel.ui.collectAsStateWithLifecycle()
                 val servers by viewModel.servers.collectAsStateWithLifecycle()
@@ -125,33 +167,51 @@ class MainActivity : ComponentActivity() {
                 val allAssignments by viewModel.allAssignments.collectAsStateWithLifecycle()
                 val aggregateCovers by viewModel.aggregateCovers.collectAsStateWithLifecycle()
                 val aggregateDisabledMembers by viewModel.aggregateDisabledMembers.collectAsStateWithLifecycle()
+                val protectedRefs by viewModel.protectedOutputs.collectAsStateWithLifecycle()
                 val aggregateCoverActionsFor: (String) -> CoverActions = { serverId ->
-                    CoverActions(
-                        onOpen = { viewModel.aggCoverOpen(serverId, it) },
-                        onClose = { viewModel.aggCoverClose(serverId, it) },
-                        onStop = { viewModel.aggCoverStop(serverId, it) },
+                    guardedCoverActions(
+                        serverId, protectedRefs,
+                        CoverActions(
+                            onOpen = { viewModel.aggCoverOpen(serverId, it) },
+                            onClose = { viewModel.aggCoverClose(serverId, it) },
+                            onStop = { viewModel.aggCoverStop(serverId, it) },
+                        ),
                     )
                 }
                 val aggregateActionsFor: (String) -> MyioActions = { serverId ->
-                    MyioActions(
-                        onToggleRelay = { viewModel.aggToggleRelay(serverId, it) },
-                        onTogglePca = { viewModel.aggTogglePca(serverId, it) },
-                        onSetPcaBrightness = { p, v -> viewModel.aggSetPcaBrightness(serverId, p, v) },
-                        onTogglePwm = { viewModel.aggTogglePwm(serverId, it) },
-                        onSetPwmBrightness = { d, v -> viewModel.aggSetPwmBrightness(serverId, d, v) },
+                    guardedActions(
+                        serverId, protectedRefs,
+                        MyioActions(
+                            onToggleRelay = { viewModel.aggToggleRelay(serverId, it) },
+                            onTogglePca = { viewModel.aggTogglePca(serverId, it) },
+                            onSetPcaBrightness = { p, v -> viewModel.aggSetPcaBrightness(serverId, p, v) },
+                            onTogglePwm = { viewModel.aggTogglePwm(serverId, it) },
+                            onSetPwmBrightness = { d, v -> viewModel.aggSetPwmBrightness(serverId, d, v) },
+                        ),
                     )
                 }
 
                 val groupActions = GroupActions(
-                    onSwitch = { sid, m, on -> viewModel.groupSwitch(sid, m, on) },
-                    onCovers = { sid, c, move -> viewModel.groupCovers(sid, c, move) },
-                    onLevel = { sid, m, level -> viewModel.groupLevel(sid, m, level) },
+                    onSwitch = { sid, m, on ->
+                        guarded(groupRefs(sid, m)) { viewModel.groupSwitch(sid, m, on) }
+                    },
+                    onCovers = { sid, c, move ->
+                        guarded(c.map { memberRef(sid, it.outputKey()) }) { viewModel.groupCovers(sid, c, move) }
+                    },
+                    onLevel = { sid, m, level ->
+                        guarded(groupRefs(sid, m)) { viewModel.groupLevel(sid, m, level) }
+                    },
                 )
 
                 val scenes by viewModel.scenes.collectAsStateWithLifecycle()
                 val sceneActions = SceneActions(
                     scenes = scenes,
-                    onRun = viewModel::runScene,
+                    onRun = { scene ->
+                        val refs = AccessControl.sceneRefs(
+                            scene.entries.map { memberRef(it.serverId, it.outputKey) }, scene.turnOthersOff, protectedRefs,
+                        )
+                        guarded(refs) { viewModel.runScene(scene) }
+                    },
                     onPrepareCapture = viewModel::prepareSceneCapture,
                     defaultName = viewModel::defaultSceneName,
                     onAdd = viewModel::addScene,
@@ -172,17 +232,21 @@ class MainActivity : ComponentActivity() {
 
                 NavHost(navController = navController, startDestination = "home") {
                     composable("home") {
+                        val singleId = currentServer?.id.orEmpty()
                         MainScreen(
                             ui = ui,
-                            actions = MyioActions(
-                                onToggleRelay = viewModel::toggleRelay,
-                                onTogglePca = viewModel::togglePca,
-                                onSetPcaBrightness = viewModel::setPcaBrightness,
-                                onTogglePwm = viewModel::togglePwm,
-                                onSetPwmBrightness = viewModel::setPwmBrightness,
-                                onSetRelayThermostat = viewModel::setRelayThermostat,
-                                onSetPcaThermostat = viewModel::setPcaThermostat,
-                                onSetPwmThermostat = viewModel::setPwmThermostat,
+                            actions = guardedActions(
+                                singleId, protectedRefs,
+                                MyioActions(
+                                    onToggleRelay = viewModel::toggleRelay,
+                                    onTogglePca = viewModel::togglePca,
+                                    onSetPcaBrightness = viewModel::setPcaBrightness,
+                                    onTogglePwm = viewModel::togglePwm,
+                                    onSetPwmBrightness = viewModel::setPwmBrightness,
+                                    onSetRelayThermostat = viewModel::setRelayThermostat,
+                                    onSetPcaThermostat = viewModel::setPcaThermostat,
+                                    onSetPwmThermostat = viewModel::setPwmThermostat,
+                                ),
                             ),
                             servers = servers,
                             currentServer = currentServer,
@@ -194,6 +258,8 @@ class MainActivity : ComponentActivity() {
                             onSelectTab = viewModel::selectTab,
                             expertMode = expertMode,
                             onToggleOutputHidden = viewModel::toggleOutputHidden,
+                            protectedKeys = AccessControl.keysOf(protectedRefs, singleId),
+                            onToggleOutputProtected = { key -> toggleProtected(singleId, key, protectedRefs) },
                             disabledCoverMembers = disabledCoverMembers,
                             aggregateDisabledMembers = aggregateDisabledMembers,
                             zoneConfig = zoneConfig,
@@ -208,12 +274,13 @@ class MainActivity : ComponentActivity() {
                             zoneMemberOrder = zoneOrder,
                             onMoveAggregateMember = viewModel::moveZoneMemberRefs,
                             covers = covers,
-                            onCoverOpen = viewModel::coverOpen,
-                            onCoverClose = viewModel::coverClose,
-                            onCoverStop = viewModel::coverStop,
+                            onCoverOpen = { c -> guarded(listOf(memberRef(singleId, c.outputKey()))) { viewModel.coverOpen(c) } },
+                            onCoverClose = { c -> guarded(listOf(memberRef(singleId, c.outputKey()))) { viewModel.coverClose(c) } },
+                            onCoverStop = { c -> guarded(listOf(memberRef(singleId, c.outputKey()))) { viewModel.coverStop(c) } },
                             onCoverSwap = viewModel::swapCover,
                             onCoverRename = viewModel::renameCover,
                             onCoverDisable = { viewModel.setCoverDisabled(it, true) },
+                            onCoverToggleProtected = { c -> toggleProtected(singleId, c.outputKey(), protectedRefs) },
                             isAggregate = isAggregate,
                             aggregatePerServer = aggregate.perServer,
                             aggregateAssignments = allAssignments,
@@ -237,6 +304,9 @@ class MainActivity : ComponentActivity() {
                             onFullBackup = { fullBackupLauncher.launch(SettingsSharing.fullBackupFileName()) },
                             expertMode = expertMode,
                             onSetExpertMode = viewModel::setExpertMode,
+                            appLock = appLockPref == true,
+                            onSetAppLock = ::setAppLockChecked,
+                            lockUnavailableReason = BiometricAuth.unavailableReason(BiometricAuth.availability(this@MainActivity)),
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -302,6 +372,103 @@ class MainActivity : ComponentActivity() {
                     null -> {}
                 }
             }
+        }
+    }
+
+    override fun onDestroy() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(processObserver)
+        super.onDestroy()
+    }
+
+    /** Unlocks the app lock screen with the system authentication (no screen lock on the device → no lock). */
+    private fun promptUnlock() {
+        if (promptActive) return
+        if (BiometricAuth.availability(this) != BiometricAuth.Availability.AVAILABLE) { locked = false; return }
+        promptActive = true
+        BiometricAuth.prompt(this, "Az alkalmazás zárolva van", null) { ok ->
+            promptActive = false
+            if (ok) locked = false
+        }
+    }
+
+    /** App-lock switch: enabling needs a successful authentication first (and a device screen lock). */
+    private fun setAppLockChecked(value: Boolean) {
+        if (!value) { viewModel.setAppLock(false); return }
+        val reason = BiometricAuth.unavailableReason(BiometricAuth.availability(this))
+        if (reason != null) { Toast.makeText(this, reason, Toast.LENGTH_LONG).show(); return }
+        if (promptActive) return
+        promptActive = true
+        BiometricAuth.prompt(this, "Alkalmazás zárolásának bekapcsolása", null) { ok ->
+            promptActive = false
+            if (ok) { locked = false; viewModel.setAppLock(true) }
+        }
+    }
+
+    /**
+     * Runs [action] now, or — when it touches a protected output outside the 30 s unlock window — after a
+     * successful authentication (one prompt for everything queued meanwhile; [key] collapses repeats such as
+     * a slider drag to the latest one). A device without screen lock cannot authenticate: run directly.
+     */
+    private fun guarded(refs: Collection<String>, key: String? = null, action: () -> Unit) {
+        val now = SystemClock.elapsedRealtime()
+        if (!AccessControl.needsAuth(refs, viewModel.protectedOutputs.value, unlockedUntil, now) ||
+            BiometricAuth.availability(this) != BiometricAuth.Availability.AVAILABLE
+        ) { action(); return }
+        pendingActions[key ?: "#${pendingSeq++}"] = action
+        if (promptActive) return
+        promptActive = true
+        BiometricAuth.prompt(this, "Védett kimenet", "Hitelesítés a vezérléshez") { ok ->
+            promptActive = false
+            val run = pendingActions.values.toList()
+            pendingActions.clear()
+            if (ok) {
+                unlockedUntil = AccessControl.unlockedUntil(SystemClock.elapsedRealtime())
+                run.forEach { it() }
+            }
+        }
+    }
+
+    private fun groupRefs(serverId: String, m: GroupMembers): List<String> =
+        (m.relays.map { it.outputKey() } + m.pcas.map { it.outputKey() } + m.pwms.map { it.outputKey() } +
+            m.covers.map { it.outputKey() }).map { memberRef(serverId, it) }
+
+    /** [base] with every control going through [guarded] for [serverId], plus the server's protected keys for the badges. */
+    private fun guardedActions(serverId: String, protectedRefs: Set<String>, base: MyioActions): MyioActions {
+        fun ref(key: String) = listOf(memberRef(serverId, key))
+        return MyioActions(
+            onToggleRelay = { r -> guarded(ref(r.outputKey())) { base.onToggleRelay(r) } },
+            onTogglePca = { p -> guarded(ref(p.outputKey())) { base.onTogglePca(p) } },
+            onSetPcaBrightness = { p, v -> guarded(ref(p.outputKey()), "pca:${p.outputKey()}") { base.onSetPcaBrightness(p, v) } },
+            onTogglePwm = { d -> guarded(ref(d.outputKey())) { base.onTogglePwm(d) } },
+            onSetPwmBrightness = { d, v -> guarded(ref(d.outputKey()), "pwm:${d.outputKey()}") { base.onSetPwmBrightness(d, v) } },
+            onSetRelayThermostat = { r, on, off -> guarded(ref(r.outputKey())) { base.onSetRelayThermostat(r, on, off) } },
+            onSetPcaThermostat = { p, on, off -> guarded(ref(p.outputKey())) { base.onSetPcaThermostat(p, on, off) } },
+            onSetPwmThermostat = { d, on, off -> guarded(ref(d.outputKey())) { base.onSetPwmThermostat(d, on, off) } },
+            protectedKeys = AccessControl.keysOf(protectedRefs, serverId),
+        )
+    }
+
+    private fun guardedCoverActions(serverId: String, protectedRefs: Set<String>, base: CoverActions): CoverActions {
+        fun ref(c: org.vaczi.myiohome.data.model.Cover) = listOf(memberRef(serverId, c.outputKey()))
+        return base.copy(
+            onOpen = { c -> guarded(ref(c)) { base.onOpen(c) } },
+            onClose = { c -> guarded(ref(c)) { base.onClose(c) } },
+            onStop = { c -> guarded(ref(c)) { base.onStop(c) } },
+            protectedKeys = AccessControl.keysOf(protectedRefs, serverId),
+            onToggleProtected = { c -> toggleProtected(serverId, c.outputKey(), protectedRefs) },
+        )
+    }
+
+    /** Expert toggle of one output's protection: enabling needs a device screen lock; disabling needs authentication. */
+    private fun toggleProtected(serverId: String, outputKey: String, protectedRefs: Set<String>) {
+        if (serverId.isEmpty()) return
+        val ref = memberRef(serverId, outputKey)
+        if (ref in protectedRefs) {
+            guarded(listOf(ref)) { viewModel.setOutputProtected(serverId, outputKey, false) }
+        } else {
+            val reason = BiometricAuth.unavailableReason(BiometricAuth.availability(this))
+            if (reason != null) Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+            else viewModel.setOutputProtected(serverId, outputKey, true)
         }
     }
 

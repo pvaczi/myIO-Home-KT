@@ -206,6 +206,29 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun fullBackupRoundTripsAppLockAndProtectedOutputs() {
+        val refs = listOf("s1|R3", "s2|C5")
+        val full = SettingsBackup.decode(
+            SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), full = true, appLock = true, protectedOutputs = refs),
+        )!!
+        assertEquals(true, full.appLock)
+        assertEquals(refs, full.protectedOutputs)
+        // The sharing export never carries them.
+        val share = SettingsBackup.decode(
+            SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), appLock = true, protectedOutputs = refs),
+        )!!
+        assertNull(share.appLock)
+        assertNull(share.protectedOutputs)
+    }
+
+    @Test
+    fun oldFullBackupWithoutLockFieldsDecodesAsAbsent() {
+        val old = SettingsBackup.decode("""{"format":"myio-home-settings","version":1,"full":true,"expertMode":true}""")!!
+        assertNull(old.appLock)
+        assertNull(old.protectedOutputs)
+    }
+
+    @Test
     fun emptyConfigRoundTrips() {
         val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap())
         val decoded = SettingsBackup.decode(blob)!!

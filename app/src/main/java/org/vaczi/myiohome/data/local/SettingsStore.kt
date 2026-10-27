@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -142,6 +143,25 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[EXPERT] = value }
     }
 
+    /** App lock (defaults to false): the content is covered by a lock screen until the system authentication succeeds. */
+    val appLock: Flow<Boolean> = dataStore.data.map { it[APP_LOCK] ?: false }.distinctUntilChanged()
+
+    suspend fun setAppLock(value: Boolean) {
+        dataStore.edit { it[APP_LOCK] = value }
+    }
+
+    /** Protected outputs as global `serverId|outputKey` refs (see [memberRef]); controlling one needs authentication. */
+    val protectedOutputs: Flow<Set<String>> = dataStore.data.map { it[PROTECTED] ?: emptySet() }.distinctUntilChanged()
+
+    suspend fun setProtectedOutputs(refs: Set<String>) {
+        dataStore.edit { it[PROTECTED] = refs }
+    }
+
+    /** Atomically add/remove one protected [ref]. */
+    suspend fun setProtected(ref: String, value: Boolean) {
+        dataStore.edit { it[PROTECTED] = (it[PROTECTED] ?: emptySet()).let { s -> if (value) s + ref else s - ref } }
+    }
+
     /**
      * Last-open tab for a server, as a **stable tab name** (null if never set). Stored by name rather
      * than by the tab's enum ordinal so that inserting/reordering tabs in the UI can't silently shift a
@@ -192,6 +212,8 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         private val SELECTED = stringPreferencesKey("selected_host")
         private val THEME = stringPreferencesKey("theme")
         private val EXPERT = booleanPreferencesKey("expert_mode")
+        private val APP_LOCK = booleanPreferencesKey("app_lock")
+        private val PROTECTED = stringSetPreferencesKey("protected_outputs")
         private const val TAB_NAME_PREFIX = "tabname_"
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */

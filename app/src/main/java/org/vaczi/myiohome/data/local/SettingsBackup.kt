@@ -44,6 +44,10 @@ data class SettingsBackup(
     val selectedId: String? = null,
     /** serverId → last-open tab name. */
     val lastTabs: Map<String, String> = emptyMap(),
+    /** App lock switch (full backup only; null = absent → import leaves it untouched). */
+    val appLock: Boolean? = null,
+    /** Protected outputs as `serverId|outputKey` refs (full backup only; null = absent → untouched). */
+    val protectedOutputs: List<String>? = null,
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -68,6 +72,8 @@ data class SettingsBackup(
             hideZoned: Boolean? = null,
             selectedId: String? = null,
             lastTabs: Map<String, String> = emptyMap(),
+            appLock: Boolean? = null,
+            protectedOutputs: List<String>? = null,
         ): String = json.encodeToString(
             serializer(),
             // Sharing: forSharing() swaps in each slot's optional share credentials (e.g. family) so the
@@ -86,6 +92,8 @@ data class SettingsBackup(
                 hideZoned = if (full) hideZoned else null,
                 selectedId = if (full) selectedId else null,
                 lastTabs = if (full) lastTabs else emptyMap(),
+                appLock = if (full) appLock else null,
+                protectedOutputs = if (full) protectedOutputs else null,
             ),
         )
 

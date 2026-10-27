@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
@@ -55,6 +56,10 @@ fun AppSettingsScreen(
     onFullBackup: () -> Unit,
     expertMode: Boolean,
     onSetExpertMode: (Boolean) -> Unit,
+    appLock: Boolean,
+    onSetAppLock: (Boolean) -> Unit,
+    // Non-null = the device cannot authenticate (no screen lock): the lock cannot be enabled, and why.
+    lockUnavailableReason: String?,
     onBack: () -> Unit,
 ) {
     var showHelp by remember { mutableStateOf(false) }
@@ -137,12 +142,34 @@ fun AppSettingsScreen(
 
             HorizontalDivider()
 
+            SectionHeader("Biztonság")
+            val lockBlocked = lockUnavailableReason != null && !appLock
+            ListItem(
+                headlineContent = { Text("Alkalmazás zárolása") },
+                supportingContent = {
+                    Text(
+                        lockUnavailableReason?.takeIf { lockBlocked }
+                            ?: "Indításkor és 1 percnél hosszabb háttérben töltött idő után a telefon képernyőzárával (ujjlenyomat, PIN, minta) lehet feloldani.",
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                trailingContent = { Switch(checked = appLock, onCheckedChange = onSetAppLock, enabled = !lockBlocked) },
+                modifier = Modifier.fillMaxWidth().selectable(
+                    selected = appLock,
+                    enabled = !lockBlocked,
+                    role = Role.Switch,
+                    onClick = { onSetAppLock(!appLock) },
+                ),
+            )
+
+            HorizontalDivider()
+
             SectionHeader("Speciális")
             ListItem(
                 headlineContent = { Text("Szakértő mód") },
                 supportingContent = {
                     Text(
-                        "Zónák szerkesztése és elemek elrejtése. Kikapcsolva egyszerű, zárolt nézet.",
+                        "Zónák szerkesztése, elemek elrejtése és védetté tétele. Kikapcsolva egyszerű, zárolt nézet.",
                     )
                 },
                 leadingContent = { Icon(Icons.Filled.Tune, contentDescription = null) },

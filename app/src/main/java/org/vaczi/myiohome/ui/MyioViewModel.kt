@@ -142,6 +142,22 @@ class MyioViewModel(
         viewModelScope.launch { settings.setExpertMode(value) }
     }
 
+    /** App lock switch; null until the first DataStore read (the UI keeps the content covered meanwhile). */
+    val appLock: StateFlow<Boolean?> =
+        settings.appLock.map<Boolean, Boolean?> { it }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun setAppLock(value: Boolean) {
+        viewModelScope.launch { settings.setAppLock(value) }
+    }
+
+    /** Protected outputs as global `serverId|outputKey` refs. */
+    val protectedOutputs: StateFlow<Set<String>> =
+        settings.protectedOutputs.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun setOutputProtected(serverId: String, outputKey: String, value: Boolean) {
+        viewModelScope.launch { settings.setProtected(memberRef(serverId, outputKey), value) }
+    }
+
     /**
      * Toggle whether [outputKey] is hidden from non-expert display on the **current** server. Stored on the
      * server slot ([MyioServer.hiddenOutputs]) so it travels with the slot (and the shared backup). Editing
@@ -553,6 +569,8 @@ class MyioViewModel(
         hideZoned = hideZoned.value,
         selectedId = settings.selectedId.first(),
         lastTabs = settings.allLastTabs(),
+        appLock = settings.appLock.first(),
+        protectedOutputs = protectedOutputs.value.sorted(),
     )
 
     /**
@@ -572,6 +590,8 @@ class MyioViewModel(
             if (backup.full) {
                 backup.expertMode?.let { settings.setExpertMode(it) }
                 backup.hideZoned?.let { zones.setHideZoned(it) }
+                backup.protectedOutputs?.let { settings.setProtectedOutputs(it.toSet()) }
+                backup.appLock?.let { settings.setAppLock(it) }
                 backup.lastTabs.forEach { (id, tab) -> if (backup.servers.any { it.id == id }) settings.setLastTab(id, tab) }
                 backup.selectedId
                     ?.takeIf { it == SettingsStore.AGGREGATE_ID || backup.servers.any { s -> s.id == it } }

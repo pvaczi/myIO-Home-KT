@@ -135,6 +135,8 @@ data class MyioActions(
     val onSetRelayThermostat: (RelayOutput, Int, Int) -> Unit = { _, _, _ -> },
     val onSetPcaThermostat: (PcaOutput, Int, Int) -> Unit = { _, _, _ -> },
     val onSetPwmThermostat: (PwmOutput, Int, Int) -> Unit = { _, _, _ -> },
+    /** Output keys of this server that need an authentication to control (drives the shield badge). */
+    val protectedKeys: Set<String> = emptySet(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -155,6 +157,9 @@ fun MainScreen(
     // editing tools (assign / reorder / visibility) are hidden — a locked, simplified view.
     expertMode: Boolean = true,
     onToggleOutputHidden: (outputKey: String) -> Unit = {},
+    // Per-output protection (expert): protected keys of the current server + the toggle.
+    protectedKeys: Set<String> = emptySet(),
+    onToggleOutputProtected: (outputKey: String) -> Unit = {},
     // Disabled-cover endpoint keys (coverKey → P/R keys) so a hidden/zoned cover that's been demoted to
     // "not a cover" keeps hiding/zoning its now-plain outputs. Single server; per-server for the aggregate.
     disabledCoverMembers: Map<String, List<String>> = emptyMap(),
@@ -179,6 +184,7 @@ fun MainScreen(
     onCoverSwap: (Cover) -> Unit = {},
     onCoverRename: (Cover, String) -> Unit = { _, _ -> },
     onCoverDisable: (Cover) -> Unit = {},
+    onCoverToggleProtected: (Cover) -> Unit = {},
     // Aggregate ("Otthon (összes)") mode: render every polled server's zoned outputs in one dashboard.
     isAggregate: Boolean = false,
     aggregatePerServer: Map<String, MyioUiState> = emptyMap(),
@@ -229,7 +235,8 @@ fun MainScreen(
     val hiddenKeys = remember(currentServer, disabledCoverMembers) {
         expandHiddenForDisabledCovers(currentServer?.hiddenOutputs?.toSet() ?: emptySet(), disabledCoverMembers)
     }
-    val hideUi = HideUi(hideMode = hideMode, hiddenKeys = hiddenKeys, onToggleHidden = onToggleOutputHidden)
+    val hideUi = HideUi(hideMode = hideMode, hiddenKeys = hiddenKeys, onToggleHidden = onToggleOutputHidden,
+        protectedKeys = protectedKeys, onToggleProtected = onToggleOutputProtected)
     val homeExclude = if (expertMode) emptySet() else hiddenKeys
     val aggregateHiddenByServer = remember(expertMode, servers, aggregateDisabledMembers) {
         if (expertMode) emptyMap()
@@ -284,6 +291,7 @@ fun MainScreen(
     val coverActions = CoverActions(
         onOpen = onCoverOpen, onClose = onCoverClose, onStop = onCoverStop,
         onSwap = onCoverSwap, onRename = onCoverRename, onDisable = onCoverDisable,
+        protectedKeys = protectedKeys, onToggleProtected = onCoverToggleProtected,
     )
     // Resolve the persisted tab: a Tab name directly, or a legacy ordinal migrated via the current enum
     // order (see SettingsStore.resolveTab). Falls back to the first visible tab.
