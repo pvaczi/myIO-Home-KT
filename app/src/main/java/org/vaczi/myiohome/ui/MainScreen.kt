@@ -73,7 +73,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import org.vaczi.myiohome.data.net.ActiveAddress
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -895,6 +897,7 @@ private fun ServerTitle(
     aggregateStatus: ConnectionStatus? = ConnectionStatus.Connected,
 ) {
     var open by remember { mutableStateOf(false) }
+    val altIds by ActiveAddress.altServerIds.collectAsState()
     // Openable if there's more than one real server, or the aggregate is offered as an extra choice.
     val switchable = servers.size > 1 || showAggregate
     // null = nothing to connect to (no server / no polled server yet): no dot, no fake "connecting".
@@ -907,7 +910,7 @@ private fun ServerTitle(
     val subtitle = when {
         isAggregate -> if (aggregateStatus == null) "Még nincs zónázott eszköz" else "Összevont vezérlés"
         current == null -> "Nincs szerver beállítva"
-        else -> statusLine(ui)
+        else -> statusLine(ui) + if (current.id in altIds) " (második cím)" else ""
     }
     Box {
         Row(

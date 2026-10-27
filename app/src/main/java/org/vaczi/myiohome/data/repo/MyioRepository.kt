@@ -38,7 +38,9 @@ class MyioRepository(
     private val client = MyioHttpClient(config)
 
     // Serializes ALL network I/O to this device (poll / getInfo / refreshMetadata / sendCommand), across
-    // every repository instance, so no two connections to the device overlap.
+    // every repository instance, so no two connections to the device overlap. Keyed by the PRIMARY address
+    // only: the optional second address of the same server shares this gate (never used in parallel, pacing
+    // carries over on a switch), and discovery / other slots on the same host:port still meet here too.
     private val gate = DeviceGate.of(config.host, config.port)
     private val netMutex = gate.net
 

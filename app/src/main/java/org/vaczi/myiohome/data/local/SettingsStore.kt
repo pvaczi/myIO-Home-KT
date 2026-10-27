@@ -59,8 +59,17 @@ data class MyioServer(
     val shareUser: String? = null,
     val sharePassword: String? = null,
     val id: String = newId(),
+    /**
+     * Optional second address (e.g. a DDNS name for use outside the LAN), used when [host] is unreachable
+     * (connection-level failure only). Additive: old data decodes as null.
+     */
+    val altHost: String? = null,
+    val altPort: Int? = null,
 ) {
-    fun toConfig(): ServerConfig = ServerConfig(host = host, port = port, user = user, password = password)
+    fun toConfig(): ServerConfig = ServerConfig(
+        host = host, port = port, user = user, password = password,
+        altHost = altHost?.trim()?.takeIf { it.isNotEmpty() }, altPort = altPort ?: 80, serverId = id,
+    )
 
     /**
      * The copy that goes into a shared backup: if [shareUser] is set, its credentials replace [user]/

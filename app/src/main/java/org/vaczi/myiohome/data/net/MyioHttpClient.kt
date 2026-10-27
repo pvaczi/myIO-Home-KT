@@ -19,6 +19,11 @@ data class ServerConfig(
     val port: Int = 80,
     val user: String = "admin",
     val password: String = "admin",
+    /** Optional second address (e.g. DDNS), tried when the first is unreachable. See [AddressFailover]. */
+    val altHost: String? = null,
+    val altPort: Int = 80,
+    /** Key of the remembered active address ([ActiveAddress]); the slot id. */
+    val serverId: String = host,
 )
 
 /**
@@ -36,6 +41,7 @@ class MyioHttpClient(
     private val client: OkHttpClient = defaultClient,
 ) {
     private val base = "http://${config.host}:${config.port}"
+    private val altBase: String? = config.altHost?.takeIf { it.isNotBlank() }?.let { "http://$it:${config.altPort}" }
     private val authHeader: String = run {
         val raw = "${config.user}:${config.password}"
         // ISO-8859-1 (OkHttp's Credentials.basic default): US_ASCII silently maps non-ASCII to '?'.
@@ -63,21 +69,48 @@ class MyioHttpClient(
      * `POST /info.json` (a ~200 B reply) instead of `/` (the full 16-19 kB index page); any 2xx is success,
      * the reply is not parsed.
      */
-    suspend fun sendCommand(body: String): Unit = withContext(Dispatchers.IO) {
-        val request = commandRequest(base, authHeader, body)
+    suspend fun sendCommand(body: String): Unit = failover { url ->
+        val request = commandRequest(url, authHeader, body)
         commandClient.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) throw statusError("Command failed", resp, " for '$body'")
         }
     }
 
-    private suspend fun get(path: String, c: OkHttpClient): String = withContext(Dispatchers.IO) {
-        val request = baseRequest("$base$path", authHeader)
+    private suspend fun get(path: String, c: OkHttpClient): String = failover { url ->
+        val request = baseRequest("$url$path", authHeader)
             .get()
             .build()
         c.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) throw statusError("GET $path failed", resp)
             resp.body?.string() ?: error("GET $path: empty body")
         }
+    }
+
+    /**
+     * Runs [call] against the active address; on a connection-level failure ([AddressFailover]) retries
+     * once on the other one, which then becomes the active address of this server. Both failing rethrows the
+     * second error (the first attached as suppressed) → an ordinary failure for the backoff. The caller
+     * holds the device gate for the whole span, so the two attempts never overlap.
+     */
+    private suspend fun <T> failover(call: (baseUrl: String) -> T): T = withContext(Dispatchers.IO) {
+        val order = AddressFailover.order(altBase != null, ActiveAddress.isAlt(config.serverId))
+        var firstError: Exception? = null
+        for ((i, which) in order.withIndex()) {
+            val url = if (which == Which.Alt) altBase!! else base
+            try {
+                val result = call(url)
+                if (i > 0) ActiveAddress.set(config.serverId, which)
+                return@withContext result
+            } catch (e: Exception) {
+                val last = i == order.lastIndex
+                if (last || !AddressFailover.isConnectionFailure(e)) {
+                    firstError?.let { e.addSuppressed(it) }
+                    throw e
+                }
+                firstError = e
+            }
+        }
+        throw IllegalStateException("unreachable")
     }
 
     private fun statusError(what: String, resp: Response, suffix: String = ""): HttpStatusException {

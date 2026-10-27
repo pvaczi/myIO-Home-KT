@@ -163,6 +163,7 @@ fun ServerSettingsScreen(
                         )
                         Text(
                             "${server.host}:${server.port}" +
+                                (server.altHost?.takeIf { it.isNotBlank() }?.let { " · ${it}:${server.altPort ?: 80}" } ?: "") +
                                 (if (flags.isEmpty()) "" else "\n" + flags.joinToString(" · ")),
                         )
                     },
@@ -419,6 +420,8 @@ private fun ServerEditDialog(
         mutableStateOf(initial?.host ?: subnetCandidates.firstOrNull()?.let { "$it." } ?: "")
     }
     var port by remember { mutableStateOf((initial?.port ?: 80).toString()) }
+    var altHost by remember { mutableStateOf(initial?.altHost ?: "") }
+    var altPort by remember { mutableStateOf((initial?.altPort ?: 80).toString()) }
     var user by remember { mutableStateOf(initial?.user ?: "admin") }
     var password by remember { mutableStateOf(initial?.password ?: "admin") }
     var pollSec by remember { mutableStateOf(initial?.pollIntervalSec ?: SettingsStore.DEFAULT_POLL_SEC) }
@@ -479,6 +482,28 @@ private fun ServerEditDialog(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
                 PasswordField(password, { password = it }, "Jelszó")
+                OutlinedTextField(
+                    altHost,
+                    { altHost = it },
+                    label = { Text("Második cím (pl. DDNS)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                )
+                if (altHost.isNotBlank()) {
+                    OutlinedTextField(
+                        altPort,
+                        { altPort = it.filter(Char::isDigit) },
+                        label = { Text("Második cím portja") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                    )
+                }
+                Text(
+                    "Opcionális. Akkor használja az app, ha az első cím nem érhető el (pl. otthonon kívül). " +
+                        "A kapcsolat titkosítatlan (HTTP), ezért csak VPN-en vagy megbízható útvonalon használd.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     "Frissítési időköz",
                     style = MaterialTheme.typography.labelLarge,
@@ -536,6 +561,8 @@ private fun ServerEditDialog(
                             port = port.toInt(),
                             user = user,
                             password = password,
+                            altHost = altHost.trim().ifBlank { null },
+                            altPort = if (altHost.isBlank()) null else (altPort.toIntOrNull() ?: 80),
                             pollIntervalSec = pollSec,
                             hidden = hidden,
                             shareUser = su,
