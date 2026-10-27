@@ -79,9 +79,16 @@ fun HomeScreen(
     /** Active server's id + group-action callbacks (zone "Mind be/ki…"); gated by [enabled] like the tiles. */
     serverId: String = "",
     groupActions: GroupActions = GroupActions(),
+    /** Scene chips (only scenes touching this server are shown); editing needs [expertMode]. */
+    sceneActions: SceneActions = SceneActions(),
+    expertMode: Boolean = false,
 ) {
+    val serverScenes = remember(sceneActions.scenes, serverId) { sceneActions.scenes.filter { SceneControl.touches(it, serverId) } }
     if (zoneConfig.zones.isEmpty()) {
-        EmptyZones(onAddZone)
+        Column(Modifier.fillMaxSize()) {
+            if (!reorderMode) SceneBar(serverScenes, expertMode, sceneActions, Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            Box(Modifier.weight(1f)) { EmptyZones(onAddZone) }
+        }
         return
     }
 
@@ -108,6 +115,9 @@ fun HomeScreen(
         }
     }
     TwoColumnLazyGrid {
+        if (!reorderMode && (serverScenes.isNotEmpty() || expertMode)) {
+            item(key = "scenes", span = { GridItemSpan(maxLineSpan) }) { SceneBar(serverScenes, expertMode, sceneActions) }
+        }
         zones.forEachIndexed { index, zone ->
             val members = perZoneMembers[zone.id].orEmpty()
             // While reordering, sections are forced open so members are visible to move.
@@ -214,9 +224,14 @@ fun AggregateHomeScreen(
     /** Per-server output keys to exclude (non-expert hidden sets); empty in expert mode. */
     hiddenByServer: Map<String, Set<String>> = emptyMap(),
     groupActions: GroupActions = GroupActions(),
+    sceneActions: SceneActions = SceneActions(),
+    expertMode: Boolean = false,
 ) {
     if (zones.isEmpty()) {
-        EmptyZones(onAddZone)
+        Column(Modifier.fillMaxSize()) {
+            if (!reorderMode) SceneBar(sceneActions.scenes, expertMode, sceneActions, Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            Box(Modifier.weight(1f)) { EmptyZones(onAddZone) }
+        }
         return
     }
     Column(Modifier.fillMaxSize()) {
@@ -235,7 +250,7 @@ fun AggregateHomeScreen(
         )
         HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) {
-                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, groupActions)
+                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, groupActions, sceneActions, expertMode)
             } else {
                 // Page index 1..n maps to zones[0..n-1]; guard against a transient out-of-range page while
                 // a zone is being deleted (the pager's page count updates a frame later).
@@ -284,6 +299,8 @@ private fun AggregateSummaryGrid(
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     groupActions: GroupActions,
+    sceneActions: SceneActions,
+    expertMode: Boolean,
 ) {
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     // Per-zone server groups, computed once so re-collapsing/expanding a section doesn't re-merge state.
@@ -293,6 +310,9 @@ private fun AggregateSummaryGrid(
         }
     }
     TwoColumnLazyGrid {
+        if (!reorderMode && (sceneActions.scenes.isNotEmpty() || expertMode)) {
+            item(key = "scenes", span = { GridItemSpan(maxLineSpan) }) { SceneBar(sceneActions.scenes, expertMode, sceneActions) }
+        }
         zones.forEachIndexed { index, zone ->
             val isCollapsed = !reorderMode && collapsed[zone.id] == true
             zoneHeaderItem(

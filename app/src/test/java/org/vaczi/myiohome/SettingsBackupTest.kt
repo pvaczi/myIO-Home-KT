@@ -5,6 +5,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.data.local.MyioServer
+import org.vaczi.myiohome.data.local.Scene
+import org.vaczi.myiohome.data.local.SceneEntry
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.Zone
 import org.vaczi.myiohome.data.local.ZoneAssignments
@@ -94,6 +96,21 @@ class SettingsBackupTest {
         // A v1-style blob (no coverOverrides key) must still decode, with an empty map.
         val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap())
         assertEquals(emptyMap<String, Map<String, CoverOverride>>(), SettingsBackup.decode(blob)!!.coverOverrides)
+    }
+
+    @Test
+    fun roundTripsScenes() {
+        val scenes = listOf(
+            Scene(id = "s1", name = "Este", entries = listOf(SceneEntry("a", "R1", 1), SceneEntry("b", "P2001", 128)), turnOthersOff = true),
+        )
+        val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), scenes = scenes)
+        assertEquals(scenes, SettingsBackup.decode(blob)!!.scenes)
+    }
+
+    @Test
+    fun oldFormatBackupWithoutScenesDecodesEmpty() {
+        val old = """{"format":"myio-home-settings","version":1,"theme":"GREEN","servers":[],"zones":[],"assignments":{}}"""
+        assertEquals(emptyList<Scene>(), SettingsBackup.decode(old)!!.scenes)
     }
 
     @Test

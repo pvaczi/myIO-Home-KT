@@ -29,6 +29,7 @@ import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.data.local.SettingsBackup
 import org.vaczi.myiohome.data.local.SettingsStore
 import org.vaczi.myiohome.data.local.CoverStore
+import org.vaczi.myiohome.data.local.SceneStore
 import org.vaczi.myiohome.data.local.StateCacheStore
 import org.vaczi.myiohome.data.local.ZoneStore
 import org.vaczi.myiohome.ui.AppSettingsScreen
@@ -37,6 +38,8 @@ import org.vaczi.myiohome.ui.GroupActions
 import org.vaczi.myiohome.ui.MainScreen
 import org.vaczi.myiohome.ui.MyioActions
 import org.vaczi.myiohome.ui.MyioViewModel
+import org.vaczi.myiohome.ui.SceneActions
+import org.vaczi.myiohome.ui.SceneControl
 import org.vaczi.myiohome.ui.ServerSettingsScreen
 import org.vaczi.myiohome.ui.SettingsSharing
 import org.vaczi.myiohome.ui.theme.MyioHomeTheme
@@ -64,6 +67,7 @@ class MainActivity : ComponentActivity() {
             StateCacheStore(applicationContext),
             ZoneStore(applicationContext),
             CoverStore(applicationContext),
+            SceneStore(applicationContext),
         )
     }
 
@@ -125,6 +129,28 @@ class MainActivity : ComponentActivity() {
                     onLevel = { sid, m, level -> viewModel.groupLevel(sid, m, level) },
                 )
 
+                val scenes by viewModel.scenes.collectAsStateWithLifecycle()
+                val sceneActions = SceneActions(
+                    scenes = scenes,
+                    onRun = viewModel::runScene,
+                    onPrepareCapture = viewModel::prepareSceneCapture,
+                    defaultName = viewModel::defaultSceneName,
+                    onAdd = viewModel::addScene,
+                    onRename = viewModel::renameScene,
+                    onSetTurnOthersOff = viewModel::setSceneTurnOthersOff,
+                    onRemoveEntry = viewModel::removeSceneEntry,
+                    onOverwrite = viewModel::overwriteScene,
+                    onDelete = viewModel::deleteScene,
+                    onMessage = viewModel::postSceneMessage,
+                    entryLabel = { e ->
+                        val server = servers.firstOrNull { it.id == e.serverId }
+                        val st = if (isAggregate) aggregate.perServer[e.serverId]?.state
+                        else if (e.serverId == currentServer?.id) ui.state else null
+                        val name = st?.let { SceneControl.entryName(it, e.outputKey) } ?: e.outputKey
+                        "${server?.name ?: "(törölt szerver)"} · $name" + if (e.level in 2..254) " (${e.level * 100 / 255}%)" else ""
+                    },
+                )
+
                 NavHost(navController = navController, startDestination = "home") {
                     composable("home") {
                         MainScreen(
@@ -175,6 +201,8 @@ class MainActivity : ComponentActivity() {
                             aggregateCovers = aggregateCovers,
                             aggregateCoverActionsFor = aggregateCoverActionsFor,
                             groupActions = groupActions,
+                            sceneActions = sceneActions,
+                            messages = viewModel.sceneMessages,
                         )
                     }
                     composable("settings") {

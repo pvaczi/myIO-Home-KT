@@ -61,6 +61,11 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -180,7 +185,17 @@ fun MainScreen(
     aggregateCoverActionsFor: (serverId: String) -> CoverActions = { CoverActions() },
     // Zone group control (Mind be/ki/fel/le/stop, közös fényerő), routed by server id.
     groupActions: GroupActions = GroupActions(),
+    // Scenes (chip row on Home / "Összes") and the one-shot snackbar lines (scene run summary).
+    sceneActions: SceneActions = SceneActions(),
+    messages: Flow<String> = emptyFlow(),
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(messages) {
+        messages.collect {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(it, duration = SnackbarDuration.Long)
+        }
+    }
     // The active editing mode is ephemeral UI state (not persisted). One enum keeps the three modes
     // (assign / reorder / visibility) mutually exclusive by construction.
     var editMode by remember { mutableStateOf(EditMode.NONE) }
@@ -348,6 +363,7 @@ fun MainScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -483,6 +499,8 @@ fun MainScreen(
                     coverActionsFor = aggregateCoverActionsFor,
                     hiddenByServer = aggregateHiddenByServer,
                     groupActions = groupActions,
+                    sceneActions = sceneActions,
+                    expertMode = expertMode,
                     actionsFor = aggregateActionsFor,
                     pagerState = aggregatePagerState,
                     reorderMode = reorderMode,
@@ -562,6 +580,8 @@ fun MainScreen(
                                 onReorderMembers = onReorderZoneMembers,
                                 serverId = currentServer?.id.orEmpty(),
                                 groupActions = groupActions,
+                                sceneActions = sceneActions,
+                                expertMode = expertMode,
                             )
                             Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 RelayControlTile(it, actions, controlsEnabled)

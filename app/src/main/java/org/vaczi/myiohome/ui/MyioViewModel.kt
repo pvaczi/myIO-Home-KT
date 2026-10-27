@@ -8,6 +8,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import org.vaczi.myiohome.data.local.Scene
+import org.vaczi.myiohome.data.local.SceneEntry
+import org.vaczi.myiohome.data.local.SceneStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -95,6 +102,7 @@ class MyioViewModel(
     private val settings: SettingsStore,
     private val zones: ZoneStore,
     private val coverStore: CoverStore,
+    private val sceneStore: SceneStore,
     private val repoFactory: (MyioServer) -> MyioRepository = { MyioRepository(it.toConfig()) },
     private val stateCache: StateCacheStore? = null,
 ) : ViewModel() {
@@ -498,6 +506,7 @@ class MyioViewModel(
         zones = globalZones.value,
         assignments = allAssignments.value,
         coverOverrides = allCoverOverrides.value,
+        scenes = scenes.value,
     )
 
     /**
@@ -511,6 +520,7 @@ class MyioViewModel(
             settings.saveServers(backup.servers)
             zones.replaceAll(backup.zones, backup.assignments)
             coverStore.replaceAll(backup.coverOverrides)
+            sceneStore.replaceAll(backup.scenes)
             settings.selectServer(backup.servers.firstOrNull()?.id ?: "")
         }
     }
@@ -746,7 +756,9 @@ class MyioViewModel(
     /** A control destination: where the optimistic state lands and which repo the command is POSTed on. */
     private interface ControlTarget {
         fun optimistic(transform: (ServerState) -> ServerState)
-        fun send(vararg bodies: String)
+        /** Sequential POSTs; [onDone] gets true only if every body was sent (false: failure / server re-pointed). */
+        fun sendAll(bodies: Array<out String>, onDone: ((Boolean) -> Unit)?)
+        fun send(vararg bodies: String) = sendAll(bodies, null)
     }
 
     /** The active single server: [ui] state guarded by [pollGeneration], on the current [repo]. */
@@ -758,9 +770,9 @@ class MyioViewModel(
         // Capture the current repo at tap time and bind the guard to it: if the selected server is
         // re-pointed (server switch / config edit) before/while the command fires, [repo] no longer equals
         // the captured instance → drop the rest, so a command can never land on the wrong device.
-        override fun send(vararg bodies: String) {
+        override fun sendAll(bodies: Array<out String>, onDone: ((Boolean) -> Unit)?) {
             val captured = repo
-            sendOn(captured, bodies, bumpGen = { if (captured === repo) pollGeneration++ }) { captured === repo }
+            sendOn(captured, bodies, bumpGen = { if (captured === repo) pollGeneration++ }, onDone = onDone) { captured === repo }
         }
     }
 
@@ -771,11 +783,11 @@ class MyioViewModel(
             updateServer(serverId) { it.copy(state = transform(it.state)) }
         }
         // Route by server id; guard against an aggregate restart re-pointing this server's repo mid-command.
-        override fun send(vararg bodies: String) {
+        override fun sendAll(bodies: Array<out String>, onDone: ((Boolean) -> Unit)?) {
             val captured = aggregateRepos[serverId]
             sendOn(captured, bodies, bumpGen = {
                 if (aggregateRepos[serverId] === captured) aggregateGen[serverId] = (aggregateGen[serverId] ?: 0) + 1
-            }) { aggregateRepos[serverId] === captured }
+            }, onDone = onDone) { aggregateRepos[serverId] === captured }
         }
     }
 
@@ -785,12 +797,13 @@ class MyioViewModel(
      * [PollBackoff.MAX_BODY_CHARS] characters, sent in order with the usual pacing and guards. No
      * optimistic update — the caller applies its own. Unknown / no longer current server → dropped.
      */
-    fun sendCommands(serverId: String, fragments: List<String>) {
+    fun sendCommands(serverId: String, fragments: List<String>, onDone: ((Boolean) -> Unit)? = null) {
         val bodies = PollBackoff.chunk(fragments).toTypedArray()
-        if (bodies.isEmpty()) return
+        if (bodies.isEmpty()) { onDone?.invoke(true); return }
         when {
-            serverId == activeId -> singleTarget.send(*bodies)
-            aggregateRepos.containsKey(serverId) -> aggregateTarget(serverId).send(*bodies)
+            serverId == activeId -> singleTarget.sendAll(bodies, onDone)
+            aggregateRepos.containsKey(serverId) -> aggregateTarget(serverId).sendAll(bodies, onDone)
+            else -> onDone?.invoke(false)
         }
     }
 
@@ -807,26 +820,32 @@ class MyioViewModel(
         repo: MyioRepository?,
         bodies: Array<out String>,
         bumpGen: () -> Unit,
+        onDone: ((Boolean) -> Unit)? = null,
         stillValid: () -> Boolean,
     ) {
-        val r = repo ?: return
+        val r = repo ?: run { onDone?.invoke(false); return }
         pendingSends[r] = (pendingSends[r] ?: 0) + 1
         viewModelScope.launch {
+            var ok = false
             try {
+                var failed = false
                 for (b in bodies) {
-                    if (!stillValid()) return@launch
+                    if (!stillValid()) { failed = true; break }
                     try {
                         r.sendCommand(b)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        return@launch
+                        failed = true
+                        break
                     }
                 }
+                ok = !failed
             } finally {
                 bumpGen()
                 val left = (pendingSends[r] ?: 1) - 1
                 if (left > 0) pendingSends[r] = left else pendingSends.remove(r)
+                onDone?.invoke(ok)
             }
         }
     }
@@ -968,6 +987,96 @@ class MyioViewModel(
         sendCommands(serverId, fragments)
     }
 
+    // --- Scenes (global; capture the on-state, run with one tap) ----------------------------------
+    //
+    // A scene is a stored set of "on" outputs across servers. Running it = per server ONE optimistic update
+    // + ONE batched [sendCommands] (servers in parallel, each serial through the device gate); a single
+    // snackbar line reports the outcome via [sceneMessages].
+
+    val scenes: StateFlow<List<Scene>> =
+        sceneStore.scenes.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _sceneMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** One-shot Hungarian status lines for a snackbar (scene run summary, "nothing is on"). */
+    val sceneMessages: SharedFlow<String> = _sceneMessages.asSharedFlow()
+
+    /** Every configured server as the scene logic sees it: commandable = polled (aggregate) / active (single) and Connected. */
+    private fun sceneServers(): List<SceneServer> {
+        val aggregateMode = isAggregate.value
+        val activeServer = currentServer.value
+        return servers.value.map { s ->
+            val per = if (aggregateMode) _aggregate.value.perServer[s.id]
+            else if (s.id == activeServer?.id) _ui.value else null
+            val cov = if (aggregateMode) aggregateCovers.value[s.id].orEmpty() else if (per != null) covers.value else emptyList()
+            SceneServer(
+                id = s.id, name = s.name,
+                state = per?.state ?: ServerState(),
+                covers = cov,
+                hiddenKeys = s.hiddenOutputs.toSet(),
+                connected = per?.status == ConnectionStatus.Connected,
+            )
+        }
+    }
+
+    /** Snapshot of what is on right now (aggregate: all polled Connected servers; single: the active one). */
+    fun prepareSceneCapture(): SceneCapture = SceneControl.capture(sceneServers())
+
+    /** Default name proposal for a new scene ("Jelenet N"). */
+    fun defaultSceneName(): String = SceneControl.defaultName(scenes.value)
+
+    fun postSceneMessage(text: String) { _sceneMessages.tryEmit(text) }
+
+    fun addScene(name: String, capture: SceneCapture) {
+        val scene = Scene(name = name.trim().ifBlank { SceneControl.defaultName(scenes.value) }, entries = capture.entries)
+        viewModelScope.launch { sceneStore.update { it + scene } }
+    }
+
+    private fun editScene(id: String, transform: (Scene) -> Scene) {
+        viewModelScope.launch { sceneStore.update { list -> list.map { if (it.id == id) transform(it) else it } } }
+    }
+
+    fun renameScene(scene: Scene, name: String) {
+        val n = name.trim()
+        if (n.isNotEmpty()) editScene(scene.id) { it.copy(name = n) }
+    }
+
+    fun setSceneTurnOthersOff(scene: Scene, value: Boolean) = editScene(scene.id) { it.copy(turnOthersOff = value) }
+
+    fun removeSceneEntry(scene: Scene, entry: SceneEntry) =
+        editScene(scene.id) { it.copy(entries = it.entries - entry) }
+
+    /** Replace the scene's entries with the current on-state (entries of servers not reachable now are kept). */
+    fun overwriteScene(scene: Scene) {
+        val capture = prepareSceneCapture()
+        if (capture.entries.isEmpty()) { postSceneMessage("Nincs bekapcsolt kimenet — a jelenet nem módosult."); return }
+        editScene(scene.id) { it.copy(entries = SceneControl.mergeCapture(it.entries, capture)) }
+    }
+
+    fun deleteScene(scene: Scene) {
+        viewModelScope.launch { sceneStore.update { list -> list.filterNot { it.id == scene.id } } }
+    }
+
+    /** Run [scene]: unreachable servers are skipped, every other server gets one batched send. */
+    fun runScene(scene: Scene) {
+        val plan = SceneControl.plan(scene, sceneServers())
+        val pending = plan.servers.map { sp ->
+            val done = CompletableDeferred<Boolean>()
+            val target = targetFor(sp.serverId)
+            if (target == null) done.complete(false)
+            else {
+                target.optimistic(sp.optimistic)
+                sendCommands(sp.serverId, sp.fragments) { done.complete(it) }
+            }
+            sp to done
+        }
+        viewModelScope.launch {
+            val outcomes = pending.map { (sp, done) ->
+                sp.serverName to if (done.await()) SceneOutcome.OK else SceneOutcome.FAILED
+            }
+            postSceneMessage(SceneControl.summary(scene.name, plan, outcomes))
+        }
+    }
+
     // Public single-server handlers (MainActivity wires these to the UI callbacks).
     fun toggleRelay(relay: RelayOutput) = singleTarget.relayToggle(relay)
     fun togglePca(pca: PcaOutput) = singleTarget.pcaToggle(pca)
@@ -995,12 +1104,13 @@ class MyioViewModel(
         /** Don't retry the one-time metadata fetch more than once a minute while it keeps failing. */
         private const val META_RETRY_INTERVAL_MS = 60_000L
 
-        fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore) = viewModelFactory {
+        fun factory(settings: SettingsStore, stateCache: StateCacheStore, zones: ZoneStore, covers: CoverStore, scenes: SceneStore) = viewModelFactory {
             initializer {
                 MyioViewModel(
                     settings = settings,
                     zones = zones,
                     coverStore = covers,
+                    sceneStore = scenes,
                     repoFactory = { MyioRepository(it.toConfig(), stateCache, StateCacheStore.cacheKey(it)) },
                     stateCache = stateCache,
                 )

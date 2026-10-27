@@ -29,6 +29,8 @@ data class SettingsBackup(
     // Per-server cover overrides (serverId → coverKey → override). Additive/optional: older backups
     // that lack it decode to an empty map (pure auto-detection on the receiving device).
     val coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
+    // Global scenes. Additive/optional: older backups that lack it decode to an empty list.
+    val scenes: List<Scene> = emptyList(),
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -46,6 +48,7 @@ data class SettingsBackup(
             zones: List<Zone>,
             assignments: Map<String, ZoneAssignments>,
             coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
+            scenes: List<Scene> = emptyList(),
         ): String = json.encodeToString(
             serializer(),
             // forSharing() swaps in each slot's optional share credentials (e.g. family) so the exporter
@@ -56,6 +59,7 @@ data class SettingsBackup(
                 zones = zones,
                 assignments = assignments,
                 coverOverrides = coverOverrides,
+                scenes = scenes,
             ),
         )
 
