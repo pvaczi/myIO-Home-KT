@@ -161,8 +161,8 @@ fun MainScreen(
     hideZoned: Boolean = false,
     onSetHideZoned: (Boolean) -> Unit = {},
     onToggleZoneAssignment: (outputKey: String, zoneId: String) -> Unit = { _, _ -> },
-    onAddZone: (String) -> String? = { null },
-    onRenameZone: (id: String, name: String) -> Unit = { _, _ -> },
+    onAddZone: (String, String?) -> String? = { _, _ -> null },
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit = { _, _, _ -> },
     onDeleteZone: (String) -> Unit = {},
     onMoveZone: (id: String, up: Boolean) -> Unit = { _, _ -> },
     onReorderZoneMembers: (zoneId: String, displayedKeys: List<String>, index: Int, up: Boolean) -> Unit = { _, _, _, _ -> },
@@ -558,7 +558,7 @@ fun MainScreen(
                             zones = zoneConfig.zones,
                             activeZoneId = activeZoneId,
                             onSelectZone = { activeZoneId = it },
-                            onAddZone = { name -> onAddZone(name)?.let { activeZoneId = it } },
+                            onAddZone = { name, icon -> onAddZone(name, icon)?.let { activeZoneId = it } },
                             hideZoned = hideZoned,
                             onSetHideZoned = onSetHideZoned,
                             nameFilter = assignFilter,
@@ -686,7 +686,7 @@ private fun RowScope.ZoneNavItem(zone: Zone, selected: Boolean, onClick: () -> U
     NavigationBarItem(
         selected = selected,
         onClick = onClick,
-        icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
+        icon = { Icon(zoneIconVector(zone.icon), contentDescription = zone.name) },
         label = { Text(zone.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
 }
@@ -715,7 +715,7 @@ private fun AggregateNavRail(
             NavigationRailItem(
                 selected = pagerState.currentPage == i + 1,
                 onClick = { onSelectPage(i + 1) },
-                icon = { Icon(Icons.AutoMirrored.Filled.Label, contentDescription = zone.name) },
+                icon = { Icon(zoneIconVector(zone.icon), contentDescription = zone.name) },
                 // Rail labels are not width-bound: without the cap a long zone name runs past the rail.
                 label = {
                     Text(
@@ -774,7 +774,7 @@ private fun AssignmentBar(
     zones: List<Zone>,
     activeZoneId: String?,
     onSelectZone: (String) -> Unit,
-    onAddZone: (String) -> Unit,
+    onAddZone: (String, String?) -> Unit,
     hideZoned: Boolean,
     onSetHideZoned: (Boolean) -> Unit,
     nameFilter: String,
@@ -839,7 +839,7 @@ private fun AssignmentBar(
         ZoneNameDialog(
             title = "Új zóna",
             confirmLabel = "Hozzáad",
-            onConfirm = { name -> onAddZone(name); showAddDialog = false },
+            onConfirm = { name, icon -> onAddZone(name, icon); showAddDialog = false },
             onDismiss = { showAddDialog = false },
         )
     }
@@ -851,23 +851,28 @@ internal fun ZoneNameDialog(
     title: String,
     confirmLabel: String,
     initial: String = "",
-    onConfirm: (String) -> Unit,
+    initialIcon: String? = null,
+    onConfirm: (name: String, icon: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf(initial) }
+    var icon by remember { mutableStateOf(initialIcon) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("Zóna neve") },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Zóna neve") },
+                )
+                ZoneIconPicker(selected = icon, onSelect = { icon = it })
+            }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(confirmLabel) }
+            TextButton(onClick = { onConfirm(name, icon) }, enabled = name.isNotBlank()) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Mégse") } },
     )

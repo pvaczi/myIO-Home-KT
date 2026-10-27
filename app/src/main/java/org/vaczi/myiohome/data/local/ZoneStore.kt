@@ -14,9 +14,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
 /** A user-named zone (tag). Zones are **global** (shared across servers); outputs are assigned to them
- * per server (see [ZoneAssignments]). Outputs are assigned many-to-many. */
+ * per server (see [ZoneAssignments]). Outputs are assigned many-to-many. [icon] is an optional stable key
+ * into the UI's fixed icon set; null (also for old stored zones/backups) = the default label icon. */
 @Serializable
-data class Zone(val id: String = java.util.UUID.randomUUID().toString(), val name: String)
+data class Zone(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val icon: String? = null,
+)
 
 /**
  * One server's output→zones assignment. [assignments] maps an output key (see `outputKey()`) to the

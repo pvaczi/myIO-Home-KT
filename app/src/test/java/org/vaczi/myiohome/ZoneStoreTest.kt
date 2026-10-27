@@ -32,6 +32,22 @@ class ZoneStoreTest {
     }
 
     @Test
+    fun parsesZonesWithAndWithoutIcon() {
+        val zones = ZoneStore.parseZones("""[{"id":"a","name":"Old"},{"id":"b","name":"New","icon":"bedroom"}]""")
+        assertEquals(null, zones[0].icon)
+        assertEquals("bedroom", zones[1].icon)
+    }
+
+    @Test
+    fun unknownIconKeyFallsBackToDefault() {
+        assertTrue(org.vaczi.myiohome.ui.ZoneIcons.forKey("no_such_icon") === org.vaczi.myiohome.ui.ZoneIcons.default)
+        assertTrue(org.vaczi.myiohome.ui.ZoneIcons.forKey(null) === org.vaczi.myiohome.ui.ZoneIcons.default)
+        assertEquals("sauna", org.vaczi.myiohome.ui.ZoneIcons.forKey("sauna").key)
+        val keys = org.vaczi.myiohome.ui.ZoneIcons.all.map { it.key }
+        assertEquals(keys.size, keys.toSet().size)
+    }
+
+    @Test
     fun roundTripsGlobalZones() {
         val zones = listOf(Zone(id = "z1", name = "Nappali"), Zone(id = "z2", name = "Kert"))
         val blob = Json.encodeToString(ListSerializer(Zone.serializer()), zones)

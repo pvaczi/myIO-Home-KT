@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -72,8 +73,8 @@ fun HomeScreen(
     coverActions: CoverActions = CoverActions(),
     /** Output keys to exclude from display (non-expert hidden set); empty in expert mode. */
     hiddenKeys: Set<String> = emptySet(),
-    onAddZone: (String) -> String?,
-    onRenameZone: (id: String, name: String) -> Unit,
+    onAddZone: (String, String?) -> String?,
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     /** Move member [index] of [displayedKeys] one step up/down (global order, filtered to this server). */
@@ -212,8 +213,8 @@ fun AggregateHomeScreen(
     actionsFor: (serverId: String) -> MyioActions,
     pagerState: PagerState,
     reorderMode: Boolean,
-    onAddZone: (String) -> String?,
-    onRenameZone: (id: String, name: String) -> Unit,
+    onAddZone: (String, String?) -> String?,
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     /** Detected covers per server (id → covers); rendered as shutter tiles, member outputs excluded. */
@@ -297,7 +298,7 @@ private fun AggregateSummaryGrid(
     actionsFor: (serverId: String) -> MyioActions,
     coverActionsFor: (serverId: String) -> CoverActions,
     reorderMode: Boolean,
-    onRenameZone: (id: String, name: String) -> Unit,
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     onMoveMember: (zoneId: String, displayedRefs: List<String>, index: Int, up: Boolean) -> Unit,
@@ -424,7 +425,7 @@ private fun aggregateGroupParts(
 private data class AggMember(val serverId: String, val tile: HomeTile, val enabled: Boolean)
 
 @Composable
-private fun EmptyZones(onAddZone: (String) -> String?) {
+private fun EmptyZones(onAddZone: (String, String?) -> String?) {
     var showAdd by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
@@ -450,7 +451,7 @@ private fun EmptyZones(onAddZone: (String) -> String?) {
         ZoneNameDialog(
             title = "Új zóna",
             confirmLabel = "Hozzáad",
-            onConfirm = { name -> onAddZone(name); showAdd = false },
+            onConfirm = { name, icon -> onAddZone(name, icon); showAdd = false },
             onDismiss = { showAdd = false },
         )
     }
@@ -462,7 +463,7 @@ private fun ZoneHeader(
     zone: Zone,
     collapsed: Boolean,
     onToggleCollapse: () -> Unit,
-    onRenameZone: (id: String, name: String) -> Unit,
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit,
     onDeleteZone: (String) -> Unit,
     groupParts: List<ZoneGroupPart>,
     groupActions: GroupActions,
@@ -478,6 +479,14 @@ private fun ZoneHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CollapseChevron(collapsed)
+            if (zone.icon != null) {
+                Icon(
+                    zoneIconVector(zone.icon),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 6.dp).size(20.dp),
+                )
+            }
             Text(
                 zone.name,
                 style = MaterialTheme.typography.titleMedium,
@@ -502,7 +511,8 @@ private fun ZoneHeader(
             title = "Zóna átnevezése",
             confirmLabel = "Mentés",
             initial = zone.name,
-            onConfirm = { name -> onRenameZone(zone.id, name); showRename = false },
+            initialIcon = zone.icon,
+            onConfirm = { name, icon -> onRenameZone(zone.id, name, icon); showRename = false },
             onDismiss = { showRename = false },
         )
     }
@@ -651,7 +661,7 @@ private fun LazyGridScope.zoneHeaderItem(
     reorderMode: Boolean,
     collapsed: Boolean,
     onToggleCollapse: () -> Unit,
-    onRenameZone: (id: String, name: String) -> Unit,
+    onRenameZone: (id: String, name: String, icon: String?) -> Unit,
     onDeleteZone: (String) -> Unit,
     onMoveZone: (id: String, up: Boolean) -> Unit,
     groupParts: List<ZoneGroupPart>,

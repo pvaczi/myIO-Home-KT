@@ -264,17 +264,17 @@ class MyioViewModel(
     }
 
     /** Add a global zone; returns its id (so the caller can make it the active target), or null if blank. */
-    fun addZone(name: String): String? {
+    fun addZone(name: String, icon: String? = null): String? {
         val n = name.trim().ifBlank { return null }
-        val zone = Zone(name = n)
+        val zone = Zone(name = n, icon = icon)
         viewModelScope.launch { zones.updateZones { it + zone } }
         return zone.id
     }
 
-    fun renameZone(id: String, name: String) {
+    fun renameZone(id: String, name: String, icon: String? = null) {
         val n = name.trim().ifBlank { return }
         viewModelScope.launch {
-            zones.updateZones { list -> list.map { if (it.id == id) it.copy(name = n) else it } }
+            zones.updateZones { list -> list.map { if (it.id == id) it.copy(name = n, icon = icon) else it } }
         }
     }
 

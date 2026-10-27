@@ -39,6 +39,15 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun roundTripKeepsZoneIcon() {
+        val zones = listOf(Zone(id = "z1", name = "Nappali", icon = "living"), Zone(id = "z2", name = "Kert"))
+        val decoded = SettingsBackup.decode(SettingsBackup.encode(AppTheme.DYNAMIC, emptyList(), zones, emptyMap()))!!
+        assertEquals(zones, decoded.zones)
+        assertEquals("living", decoded.zones[0].icon)
+        assertNull(decoded.zones[1].icon)
+    }
+
+    @Test
     fun exportSubstitutesShareCredentialsAndDropsThem() {
         val servers = listOf(
             // Has a share account → exported copy logs in as it; share-cred fields are stripped.
