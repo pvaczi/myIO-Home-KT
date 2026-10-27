@@ -1,15 +1,12 @@
-import com.android.build.gradle.internal.api.BaseVariantOutputImpl
-
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "org.vaczi.myiohome"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "org.vaczi.myiohome"
@@ -58,19 +55,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
-    }
-
-    // Descriptive APK file name (e.g. myIO-Home-KT-debug.apk) instead of the default app-debug.apk.
-    applicationVariants.all {
-        val variantName = name
-        outputs.all {
-            (this as BaseVariantOutputImpl).outputFileName = "myIO-Home-KT-$variantName.apk"
-        }
     }
 }
 

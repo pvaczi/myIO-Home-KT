@@ -1,4 +1,4 @@
-﻿# build.ps1 — myIO Home KT release build (unit tests + signed release artifact)
+# build.ps1 — myIO Home KT release build (unit tests + signed release artifact)
 #
 # Why it exists: `java` is not on PATH, so every build needs JAVA_HOME set to the Android Studio JBR.
 # Default: unit tests + bundleRelease (AAB for Play Console).
@@ -17,4 +17,10 @@ $proj = $PSScriptRoot
 $task = if ($Apk) { ':app:assembleRelease' } else { ':app:bundleRelease' }
 
 & "$proj\gradlew.bat" -p $proj :app:testDebugUnitTest $task --console=plain
-exit $LASTEXITCODE
+$rc = $LASTEXITCODE
+# AGP 9 removed the variant-output rename API: the descriptive APK name is produced here, by copying.
+if ($rc -eq 0 -and $Apk) {
+  $dir = "$proj\app\build\outputs\apk\release"
+  Copy-Item "$dir\app-release.apk" "$dir\myIO-Home-KT-release.apk" -Force
+}
+exit $rc
