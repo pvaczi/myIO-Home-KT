@@ -117,7 +117,8 @@ data class HideUi(
  * One type tab (Relék / PCA / Dimmerek / Szenzorok): the named items in a 2-column grid. Each tile is a
  * live [control] normally, a uniform [HideableTile] in visibility mode, or an [AssignableTile] in assign
  * mode. Hidden (non-expert) and already-zoned (assign + hideZoned) items are filtered out first.
- * [sceneToggle] = the visibility tiles also get the "Jelenetbe kerülhet" toggle (switchable outputs only).
+ * [sceneToggle] = which visibility tiles also get the "Jelenetbe kerülhet" toggle — only outputs a scene can
+ * actually contain (writable, not thermostat-controlled; see `groupMembers`), else the mark would do nothing.
  */
 @Composable
 internal fun <T> TypeTabList(
@@ -128,7 +129,7 @@ internal fun <T> TypeTabList(
     zoneUi: ZoneUi,
     hideUi: HideUi,
     expertMode: Boolean,
-    sceneToggle: Boolean = false,
+    sceneToggle: (T) -> Boolean = { false },
     control: @Composable (T) -> Unit,
 ) = TileGrid(
     items.filter { name(it).isNotBlank() }
@@ -137,7 +138,7 @@ internal fun <T> TypeTabList(
         .filterByName(zoneUi, name),
 ) { item ->
     when {
-        hideUi.hideMode -> HideableTile(name(item), icon, key(item), hideUi, sceneToggle)
+        hideUi.hideMode -> HideableTile(name(item), icon, key(item), hideUi, sceneToggle(item))
         zoneUi.assignMode -> AssignableTile(name(item), icon, key(item), zoneUi)
         else -> control(item)
     }
