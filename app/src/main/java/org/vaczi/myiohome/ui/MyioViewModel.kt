@@ -487,7 +487,6 @@ class MyioViewModel(
                 pollJob = viewModelScope.launch { pollLoop(server.id) }
             }
         }
-        observeAggregate()
         // One-time migration of the legacy per-server member orders into the global order (idempotent;
         // re-runs when the slot list changes, e.g. after an import).
         viewModelScope.launch {
@@ -1190,6 +1189,13 @@ class MyioViewModel(
     fun aggCoverOpen(serverId: String, cover: Cover) = aggregateTarget(serverId).coverOpen(cover)
     fun aggCoverClose(serverId: String, cover: Cover) = aggregateTarget(serverId).coverClose(cover)
     fun aggCoverStop(serverId: String, cover: Cover) = aggregateTarget(serverId).coverStop(cover)
+
+    // Must stay the LAST initializer: on Main.immediate the collector can run synchronously inside the
+    // constructor (cached selection) and touch the aggregate fields above — called from the first init
+    // block it hit a still-null `aggregateJobs` (cold-start NPE in stopAggregate).
+    init {
+        observeAggregate()
+    }
 
     companion object {
         /** Don't retry the one-time metadata fetch more than once a minute while it keeps failing. */
