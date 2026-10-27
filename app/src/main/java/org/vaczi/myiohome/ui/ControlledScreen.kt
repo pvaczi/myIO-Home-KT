@@ -99,7 +99,7 @@ private fun ControlledRow(item: ControlledItem, enabled: Boolean, onEdit: () -> 
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    thresholdSummary(item.onTenths, item.offTenths, item.unit),
+                    thresholdSummary(item.onTenths, item.offTenths, item.unit, item.sensor.kind == SensorKind.HUMIDITY),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -144,8 +144,6 @@ private fun ThermostatDialog(
 ) {
     val unit = sensor.unit()
     val isHumidity = sensor.kind == SensorKind.HUMIDITY
-    // on <= off → heating (turn on below target, off above); preserved across the edit.
-    val heating = onTenths <= offTenths
     // Target and hysteresis are shown rounded to a tenth, but the edit is kept as a shift of the device's
     // own thresholds: rounding them back would rewrite an odd band on a plain Save (225/230 → 225/231).
     val initialTargetT = ((onTenths + offTenths) / 2.0).roundToInt()
@@ -172,8 +170,9 @@ private fun ThermostatDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Jelenleg: ${formatSensor(sensor)}", style = MaterialTheme.typography.titleMedium)
+                // Live: follows the thresholds as edited, so swapping their order flips the mode.
                 Text(
-                    "Üzemmód: ${if (heating) "fűtés" else "hűtés"}",
+                    "Üzemmód: ${thermostatModeLabel(onT, offT, isHumidity)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -195,11 +194,17 @@ private fun ThermostatDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!thresholdsValid(onT, offT)) {
+                    Text(EQUAL_THRESHOLDS_HINT, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
             }
         },
         confirmButton = {
-            // Unchanged → nothing to write to the device.
-            TextButton(onClick = { if (targetShift == 0 && hystShift == 0) onDismiss() else onConfirm(onT, offT) }) {
+            // Unchanged → nothing to write to the device; equal thresholds are never saved.
+            TextButton(
+                enabled = thresholdsValid(onT, offT),
+                onClick = { if (targetShift == 0 && hystShift == 0) onDismiss() else onConfirm(onT, offT) },
+            ) {
                 Text("Mentés")
             }
         },
@@ -327,14 +332,8 @@ private fun ServerState.controlledItems(actions: MyioActions): List<ControlledIt
 
 private fun Sensor.unit(): String = if (kind == SensorKind.HUMIDITY) "%" else "°C"
 
-private fun thresholdSummary(onTenths: Int, offTenths: Int, unit: String): String {
+private fun thresholdSummary(onTenths: Int, offTenths: Int, unit: String, humidity: Boolean): String {
     val target = (onTenths + offTenths) / 20.0
     val hysteresis = abs(offTenths - onTenths) / 20.0
-    return "Cél %.1f %s · ±%.1f · %s".format(target, unit, hysteresis, modeWord(onTenths, offTenths))
-}
-
-private fun modeWord(onTenths: Int, offTenths: Int): String = when {
-    onTenths < offTenths -> "fűtés"
-    offTenths < onTenths -> "hűtés"
-    else -> "—"
+    return "Cél %.1f %s · ±%.1f · %s".format(target, unit, hysteresis, thermostatModeLabel(onTenths, offTenths, humidity))
 }
