@@ -130,6 +130,73 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun fullEncodeKeepsCredentialsAndShareFields() {
+        val servers = listOf(
+            MyioServer(name = "Fűtés", host = "10.0.0.1", user = "admin", password = "titok", shareUser = "family", sharePassword = "fam1"),
+        )
+        val decoded = SettingsBackup.decode(SettingsBackup.encode(AppTheme.GREEN, servers, emptyList(), emptyMap(), full = true))!!
+        assertEquals(servers, decoded.servers)
+        assertEquals(true, decoded.full)
+    }
+
+    @Test
+    fun shareEncodeUnchangedAndCarriesNoFullExtras() {
+        val servers = listOf(MyioServer(name = "F", host = "h", password = "titok", shareUser = "family", sharePassword = "fam1"))
+        val decoded = SettingsBackup.decode(
+            SettingsBackup.encode(
+                AppTheme.GREEN, servers, emptyList(), emptyMap(),
+                expertMode = true, hideZoned = true, selectedId = "x", lastTabs = mapOf("a" to "b"),
+            ),
+        )!!
+        assertEquals(false, decoded.full)
+        assertEquals("family", decoded.servers[0].user)
+        assertEquals("fam1", decoded.servers[0].password)
+        assertNull(decoded.servers[0].shareUser)
+        assertNull(decoded.expertMode)
+        assertNull(decoded.hideZoned)
+        assertNull(decoded.selectedId)
+        assertEquals(emptyMap<String, String>(), decoded.lastTabs)
+    }
+
+    @Test
+    fun fullBackupRoundTripsEveryIncludedField() {
+        val servers = listOf(
+            MyioServer(name = "A", host = "10.0.0.1", pollIntervalSec = 7, hidden = true, hiddenOutputs = listOf("R1"), shareUser = "u", sharePassword = "p"),
+            MyioServer(name = "B", host = "10.0.0.2"),
+        )
+        val zones = listOf(Zone(id = "z1", name = "Nappali"))
+        val assignments = mapOf(servers[0].id to ZoneAssignments(assignments = mapOf("R1" to listOf("z1"))))
+        val covers = mapOf(servers[1].id to mapOf("C1" to CoverOverride(swapped = true)))
+        val scenes = listOf(Scene(id = "s1", name = "Este", entries = listOf(SceneEntry(servers[0].id, "R1", 1))))
+        val order = mapOf("z1" to listOf("${servers[0].id}|R1"))
+        val tabs = mapOf(servers[0].id to "Relé")
+        val blob = SettingsBackup.encode(
+            AppTheme.DYNAMIC, servers, zones, assignments, covers, scenes, order,
+            full = true, expertMode = true, hideZoned = true, selectedId = servers[1].id, lastTabs = tabs,
+        )
+        val d = SettingsBackup.decode(blob)!!
+        assertEquals(AppTheme.DYNAMIC, d.theme)
+        assertEquals(servers, d.servers)
+        assertEquals(zones, d.zones)
+        assertEquals(assignments, d.assignments)
+        assertEquals(covers, d.coverOverrides)
+        assertEquals(scenes, d.scenes)
+        assertEquals(order, d.zoneOrder)
+        assertEquals(true, d.expertMode)
+        assertEquals(true, d.hideZoned)
+        assertEquals(servers[1].id, d.selectedId)
+        assertEquals(tabs, d.lastTabs)
+    }
+
+    @Test
+    fun oldFormatDecodesAsShareFile() {
+        val old = """{"format":"myio-home-settings","version":1,"theme":"GREEN","servers":[],"zones":[],"assignments":{}}"""
+        val d = SettingsBackup.decode(old)!!
+        assertEquals(false, d.full)
+        assertNull(d.expertMode)
+    }
+
+    @Test
     fun emptyConfigRoundTrips() {
         val blob = SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap())
         val decoded = SettingsBackup.decode(blob)!!

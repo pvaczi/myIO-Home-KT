@@ -536,9 +536,30 @@ class MyioViewModel(
     )
 
     /**
+     * Build a **full backup** of the user's own configuration: the sharing payload plus own credentials
+     * (no [MyioServer.forSharing]), share fields, expert mode, hide-zoned, the selection and last tabs.
+     * Contains passwords — meant for a safe place, not for sending around. The state cache is excluded.
+     */
+    suspend fun buildFullBackup(): String = SettingsBackup.encode(
+        theme = theme.value,
+        servers = servers.value,
+        zones = globalZones.value,
+        assignments = allAssignments.value,
+        coverOverrides = allCoverOverrides.value,
+        scenes = scenes.value,
+        zoneOrder = zoneOrder.value,
+        full = true,
+        expertMode = expertMode.value,
+        hideZoned = hideZoned.value,
+        selectedId = settings.selectedId.first(),
+        lastTabs = settings.allLastTabs(),
+    )
+
+    /**
      * Replace **all** settings with [backup] (servers, theme, zones, assignments). The previous config is
      * discarded. Selection is reset to the first imported server so [currentServer] stays valid; the poll
-     * loop re-points on the resulting emissions.
+     * loop re-points on the resulting emissions. A full backup additionally restores expert mode,
+     * hide-zoned, last tabs and the saved selection (when it still refers to an imported server).
      */
     fun importSettings(backup: SettingsBackup) {
         viewModelScope.launch {
@@ -547,7 +568,16 @@ class MyioViewModel(
             zones.replaceAll(backup.zones, backup.assignments, backup.zoneOrder, backup.servers.map { it.id })
             coverStore.replaceAll(backup.coverOverrides)
             sceneStore.replaceAll(backup.scenes)
-            settings.selectServer(backup.servers.firstOrNull()?.id ?: "")
+            var selection = backup.servers.firstOrNull()?.id ?: ""
+            if (backup.full) {
+                backup.expertMode?.let { settings.setExpertMode(it) }
+                backup.hideZoned?.let { zones.setHideZoned(it) }
+                backup.lastTabs.forEach { (id, tab) -> if (backup.servers.any { it.id == id }) settings.setLastTab(id, tab) }
+                backup.selectedId
+                    ?.takeIf { it == SettingsStore.AGGREGATE_ID || backup.servers.any { s -> s.id == it } }
+                    ?.let { selection = it }
+            }
+            if (selection == SettingsStore.AGGREGATE_ID) settings.selectAggregate() else settings.selectServer(selection)
         }
     }
 

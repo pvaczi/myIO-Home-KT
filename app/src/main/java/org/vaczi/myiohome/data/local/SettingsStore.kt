@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -151,7 +152,14 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    private fun tabNameKey(serverId: String) = stringPreferencesKey("tabname_$serverId")
+    /** Snapshot of every stored last-open tab by server id (name-keyed entries only; for the full backup). */
+    suspend fun allLastTabs(): Map<String, String> =
+        dataStore.data.first().asMap().entries
+            .filter { it.key.name.startsWith(TAB_NAME_PREFIX) }
+            .mapNotNull { (k, v) -> (v as? String)?.let { k.name.removePrefix(TAB_NAME_PREFIX) to it } }
+            .toMap()
+
+    private fun tabNameKey(serverId: String) = stringPreferencesKey("$TAB_NAME_PREFIX$serverId")
     private fun tabOrdinalKey(serverId: String) = intPreferencesKey("tab_$serverId")
 
     /** Full-replace write of the whole server list (used by import). For in-place mutations that must not
@@ -175,6 +183,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         private val SELECTED = stringPreferencesKey("selected_host")
         private val THEME = stringPreferencesKey("theme")
         private val EXPERT = booleanPreferencesKey("expert_mode")
+        private const val TAB_NAME_PREFIX = "tabname_"
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */
         const val AGGREGATE_ID = "__all_zones__"

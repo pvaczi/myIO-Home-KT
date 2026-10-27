@@ -5,7 +5,9 @@ import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -70,6 +72,22 @@ class MainActivity : ComponentActivity() {
             SceneStore(applicationContext),
         )
     }
+
+    // Full backup goes through the system "create document" picker (not the share sheet), so a file with
+    // passwords is not sent by chat by accident. A null uri = the user cancelled the picker.
+    private val fullBackupLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val json = viewModel.buildFullBackup()
+                val ok = withContext(Dispatchers.IO) { SettingsSharing.writeText(this@MainActivity, uri, json) }
+                Toast.makeText(
+                    this@MainActivity,
+                    if (ok) "Teljes mentés elmentve" else "A mentés nem sikerült",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -216,6 +234,7 @@ class MainActivity : ComponentActivity() {
                             onShareSettings = {
                                 SettingsSharing.share(this@MainActivity, viewModel.buildSettingsBackup())
                             },
+                            onFullBackup = { fullBackupLauncher.launch(SettingsSharing.fullBackupFileName()) },
                             expertMode = expertMode,
                             onSetExpertMode = viewModel::setExpertMode,
                             onBack = { navController.popBackStack() },
@@ -246,12 +265,20 @@ class MainActivity : ComponentActivity() {
                 when (val prompt = importPrompt) {
                     is ImportPrompt.Ready -> AlertDialog(
                         onDismissRequest = { importPrompt = null },
-                        title = { Text("Beállítások importálása") },
+                        title = {
+                            Text(if (prompt.backup.full) "Teljes mentés visszaállítása" else "Beállítások importálása")
+                        },
                         text = {
                             Text(
-                                "A megosztott fájl ${prompt.backup.servers.size} szervert és " +
-                                    "${prompt.backup.zones.size} zónát tartalmaz. Lecseréled vele a jelenlegi " +
-                                    "beállításaidat? A mostani szervereid és zónáid elvesznek.",
+                                if (prompt.backup.full) {
+                                    "Teljes mentés visszaállítása – a jelenlegi beállítások felülíródnak. " +
+                                        "A fájl ${prompt.backup.servers.size} szervert és " +
+                                        "${prompt.backup.zones.size} zónát tartalmaz. Folytatod?"
+                                } else {
+                                    "A megosztott fájl ${prompt.backup.servers.size} szervert és " +
+                                        "${prompt.backup.zones.size} zónát tartalmaz. Lecseréled vele a jelenlegi " +
+                                        "beállításaidat? A mostani szervereid és zónáid elvesznek."
+                                },
                             )
                         },
                         confirmButton = {

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -51,6 +52,7 @@ fun AppSettingsScreen(
     onSelectTheme: (AppTheme) -> Unit,
     onEditServers: () -> Unit,
     onShareSettings: () -> Unit,
+    onFullBackup: () -> Unit,
     expertMode: Boolean,
     onSetExpertMode: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -58,6 +60,21 @@ fun AppSettingsScreen(
     var showHelp by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
 
+    var showFullBackupWarning by remember { mutableStateOf(false) }
+    if (showFullBackupWarning) {
+        AlertDialog(
+            onDismissRequest = { showFullBackupWarning = false },
+            title = { Text("Teljes mentés") },
+            text = { Text("A teljes mentés a szerverek jelszavait is tartalmazza. Csak biztonságos helyre mentsd, ne oszd meg.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showFullBackupWarning = false
+                    onFullBackup()
+                }) { Text("Mentés") }
+            },
+            dismissButton = { TextButton(onClick = { showFullBackupWarning = false }) { Text("Mégse") } },
+        )
+    }
     if (showHelp) HelpDialog(onDismiss = { showHelp = false })
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
 
@@ -96,15 +113,25 @@ fun AppSettingsScreen(
 
             HorizontalDivider()
 
-            SectionHeader("Megosztás")
+            SectionHeader("Megosztás és mentés")
             ListItem(
-                headlineContent = { Text("Beállítások megosztása…") },
-                supportingContent = { Text("Szerverek és zónák küldése e-mailben, SMS-ben stb.") },
+                headlineContent = { Text("Megosztás (családtagnak)…") },
+                supportingContent = { Text("Szerverek és zónák küldése e-mailben, SMS-ben stb. (a megadott családi belépéssel)") },
                 leadingContent = { Icon(Icons.Filled.Share, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth().selectable(
                     selected = false,
                     role = Role.Button,
                     onClick = onShareSettings,
+                ),
+            )
+            ListItem(
+                headlineContent = { Text("Teljes mentés…") },
+                supportingContent = { Text("Minden beállításod fájlba mentése a saját belépéseiddel (telefoncsere, újratelepítés)") },
+                leadingContent = { Icon(Icons.Filled.Save, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().selectable(
+                    selected = false,
+                    role = Role.Button,
+                    onClick = { showFullBackupWarning = true },
                 ),
             )
 

@@ -34,6 +34,15 @@ object SettingsSharing {
         context.startActivity(Intent.createChooser(send, "Beállítások megosztása"))
     }
 
+    /** Suggested file name of a full backup, e.g. `myio-teljes-mentes-2026.10.27.json`. */
+    fun fullBackupFileName(): String =
+        "myio-teljes-mentes-" + java.text.SimpleDateFormat("yyyy.MM.dd", java.util.Locale.US).format(java.util.Date()) + ".json"
+
+    /** Write [json] to the user-chosen document [uri] (from the system "create document" picker). Blocking I/O. */
+    fun writeText(context: Context, uri: Uri, json: String): Boolean = runCatching {
+        context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.encodeToByteArray()) } != null
+    }.getOrDefault(false)
+
     /** A settings backup is a few kB; anything far larger is not one (and must not be read into memory). */
     private const val MAX_IMPORT_BYTES = 512 * 1024
 

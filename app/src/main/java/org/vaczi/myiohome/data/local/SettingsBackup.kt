@@ -34,6 +34,16 @@ data class SettingsBackup(
     // Global per-zone member order (zoneId → "<serverId>|<outputKey>" refs). Additive/optional: older
     // backups lack it and carry the legacy per-server `memberOrder`s instead, migrated on import.
     val zoneOrder: Map<String, List<String>> = emptyMap(),
+    // True for a "full backup" (own credentials kept, device-state extras below present); false for a
+    // sharing export. Additive: old files lack it and decode as sharing files.
+    val full: Boolean = false,
+    // Full-backup-only extras (null/empty in a sharing file → import leaves the receiver's own untouched).
+    val expertMode: Boolean? = null,
+    val hideZoned: Boolean? = null,
+    /** The selected server id or [SettingsStore.AGGREGATE_ID]. */
+    val selectedId: String? = null,
+    /** serverId → last-open tab name. */
+    val lastTabs: Map<String, String> = emptyMap(),
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -53,18 +63,29 @@ data class SettingsBackup(
             coverOverrides: Map<String, Map<String, CoverOverride>> = emptyMap(),
             scenes: List<Scene> = emptyList(),
             zoneOrder: Map<String, List<String>> = emptyMap(),
+            full: Boolean = false,
+            expertMode: Boolean? = null,
+            hideZoned: Boolean? = null,
+            selectedId: String? = null,
+            lastTabs: Map<String, String> = emptyMap(),
         ): String = json.encodeToString(
             serializer(),
-            // forSharing() swaps in each slot's optional share credentials (e.g. family) so the exporter
-            // never has to change their own admin login to share a restricted copy.
+            // Sharing: forSharing() swaps in each slot's optional share credentials (e.g. family) so the
+            // exporter never has to change their own admin login to share a restricted copy.
+            // Full backup: slots verbatim (own login + share fields kept) and the extras are written.
             SettingsBackup(
                 theme = theme,
-                servers = servers.map { it.forSharing() },
+                servers = if (full) servers else servers.map { it.forSharing() },
                 zones = zones,
                 assignments = assignments,
                 coverOverrides = coverOverrides,
                 scenes = scenes,
                 zoneOrder = zoneOrder,
+                full = full,
+                expertMode = if (full) expertMode else null,
+                hideZoned = if (full) hideZoned else null,
+                selectedId = if (full) selectedId else null,
+                lastTabs = if (full) lastTabs else emptyMap(),
             ),
         )
 
