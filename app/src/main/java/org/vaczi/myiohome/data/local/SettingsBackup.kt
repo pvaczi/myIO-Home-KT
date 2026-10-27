@@ -48,7 +48,10 @@ data class SettingsBackup(
     val appLock: Boolean? = null,
     /** Protected outputs as `serverId|outputKey` refs (full backup only; null = absent → untouched). */
     val protectedOutputs: List<String>? = null,
-    /** "Jelenetbe kerülhet" outputs as `serverId|outputKey` refs (full backup only; null = absent → untouched). */
+    /**
+     * "Jelenetbe kerülhet" outputs as `serverId|outputKey` refs. Carried by BOTH the full backup and the sharing
+     * export (it belongs to the scenes); null = absent → import leaves the receiver's allow-list untouched.
+     */
     val sceneAllowedOutputs: List<String>? = null,
 ) {
     companion object {
@@ -97,7 +100,8 @@ data class SettingsBackup(
                 lastTabs = if (full) lastTabs else emptyMap(),
                 appLock = if (full) appLock else null,
                 protectedOutputs = if (full) protectedOutputs else null,
-                sceneAllowedOutputs = if (full) sceneAllowedOutputs else null,
+                // Both kinds: shared scenes are useless (and unsafe to extend) without the allow-list.
+                sceneAllowedOutputs = sceneAllowedOutputs,
             ),
         )
 

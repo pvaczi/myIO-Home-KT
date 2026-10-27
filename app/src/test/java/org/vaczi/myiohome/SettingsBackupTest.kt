@@ -230,16 +230,28 @@ class SettingsBackupTest {
     }
 
     @Test
-    fun fullBackupRoundTripsSceneAllowedOutputsShareDoesNot() {
+    fun sceneAllowedOutputsRoundTripInFullBackupAndShareExport() {
         val refs = listOf("s1|R1", "s1|P2001")
         val full = SettingsBackup.decode(
             SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), full = true, sceneAllowedOutputs = refs),
         )!!
         assertEquals(refs, full.sceneAllowedOutputs)
+        // The sharing export carries it too (shared scenes are useless without it).
         val share = SettingsBackup.decode(
             SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), sceneAllowedOutputs = refs),
         )!!
-        assertNull(share.sceneAllowedOutputs)
+        assertEquals(refs, share.sceneAllowedOutputs)
+        // An empty allow-list is present (replaces), not absent.
+        val empty = SettingsBackup.decode(
+            SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), sceneAllowedOutputs = emptyList()),
+        )!!
+        assertEquals(emptyList<String>(), empty.sceneAllowedOutputs)
+    }
+
+    @Test
+    fun oldShareExportWithoutAllowListDecodesAsAbsent() {
+        val old = SettingsBackup.decode("""{"format":"myio-home-settings","version":1,"scenes":[]}""")!!
+        assertNull(old.sceneAllowedOutputs)
     }
 
     @Test

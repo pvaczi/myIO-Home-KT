@@ -570,6 +570,7 @@ class MyioViewModel(
         coverOverrides = allCoverOverrides.value,
         scenes = scenes.value,
         zoneOrder = zoneOrder.value,
+        sceneAllowedOutputs = sceneAllowedOutputs.value.sorted(),
     )
 
     /**
@@ -608,12 +609,12 @@ class MyioViewModel(
             zones.replaceAll(backup.zones, backup.assignments, backup.zoneOrder, backup.servers.map { it.id })
             coverStore.replaceAll(backup.coverOverrides)
             sceneStore.replaceAll(backup.scenes)
+            backup.sceneAllowedOutputs?.let { settings.setSceneAllowedOutputs(it.toSet()) }
             var selection = backup.servers.firstOrNull()?.id ?: ""
             if (backup.full) {
                 backup.expertMode?.let { settings.setExpertMode(it) }
                 backup.hideZoned?.let { zones.setHideZoned(it) }
                 backup.protectedOutputs?.let { settings.setProtectedOutputs(it.toSet()) }
-                backup.sceneAllowedOutputs?.let { settings.setSceneAllowedOutputs(it.toSet()) }
                 backup.appLock?.let { settings.setAppLock(it) }
                 backup.lastTabs.forEach { (id, tab) -> if (backup.servers.any { it.id == id }) settings.setLastTab(id, tab) }
                 backup.selectedId
