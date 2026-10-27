@@ -163,6 +163,21 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
     }
 
     /**
+     * Outputs marked "Jelenetbe kerülhet" as global `serverId|outputKey` refs: only these are captured into,
+     * run by or switched off by a scene. Empty by default (nothing allowed until the user marks it).
+     */
+    val sceneAllowedOutputs: Flow<Set<String>> = dataStore.data.map { it[SCENE_ALLOWED] ?: emptySet() }.distinctUntilChanged()
+
+    suspend fun setSceneAllowedOutputs(refs: Set<String>) {
+        dataStore.edit { it[SCENE_ALLOWED] = refs }
+    }
+
+    /** Atomically add/remove one scene-allowed [ref]. */
+    suspend fun setSceneAllowed(ref: String, value: Boolean) {
+        dataStore.edit { it[SCENE_ALLOWED] = (it[SCENE_ALLOWED] ?: emptySet()).let { s -> if (value) s + ref else s - ref } }
+    }
+
+    /**
      * Last-open tab for a server, as a **stable tab name** (null if never set). Stored by name rather
      * than by the tab's enum ordinal so that inserting/reordering tabs in the UI can't silently shift a
      * saved selection onto a different tab. Legacy installs stored a raw ordinal [Int] under the old key;
@@ -214,6 +229,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         private val EXPERT = booleanPreferencesKey("expert_mode")
         private val APP_LOCK = booleanPreferencesKey("app_lock")
         private val PROTECTED = stringSetPreferencesKey("protected_outputs")
+        private val SCENE_ALLOWED = stringSetPreferencesKey("scene_allowed_outputs")
         private const val TAB_NAME_PREFIX = "tabname_"
         const val DEFAULT_POLL_SEC = 2
         /** Sentinel selection id for the virtual "Otthon (összes)" aggregate (not a real server). */

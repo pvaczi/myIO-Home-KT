@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.vaczi.myiohome.data.local.AccessControl
 import org.vaczi.myiohome.data.local.AppTheme
 import org.vaczi.myiohome.ui.GroupControl.withLevel
 import org.vaczi.myiohome.ui.GroupControl.withOnOff
@@ -156,6 +157,14 @@ class MyioViewModel(
 
     fun setOutputProtected(serverId: String, outputKey: String, value: Boolean) {
         viewModelScope.launch { settings.setProtected(memberRef(serverId, outputKey), value) }
+    }
+
+    /** Outputs marked "Jelenetbe kerülhet" as global `serverId|outputKey` refs (scene capture / run allow-list). */
+    val sceneAllowedOutputs: StateFlow<Set<String>> =
+        settings.sceneAllowedOutputs.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun setOutputSceneAllowed(serverId: String, outputKey: String, value: Boolean) {
+        viewModelScope.launch { settings.setSceneAllowed(memberRef(serverId, outputKey), value) }
     }
 
     /**
@@ -583,6 +592,7 @@ class MyioViewModel(
         lastTabs = settings.allLastTabs(),
         appLock = settings.appLock.first(),
         protectedOutputs = protectedOutputs.value.sorted(),
+        sceneAllowedOutputs = sceneAllowedOutputs.value.sorted(),
     )
 
     /**
@@ -603,6 +613,7 @@ class MyioViewModel(
                 backup.expertMode?.let { settings.setExpertMode(it) }
                 backup.hideZoned?.let { zones.setHideZoned(it) }
                 backup.protectedOutputs?.let { settings.setProtectedOutputs(it.toSet()) }
+                backup.sceneAllowedOutputs?.let { settings.setSceneAllowedOutputs(it.toSet()) }
                 backup.appLock?.let { settings.setAppLock(it) }
                 backup.lastTabs.forEach { (id, tab) -> if (backup.servers.any { it.id == id }) settings.setLastTab(id, tab) }
                 backup.selectedId
@@ -1094,6 +1105,7 @@ class MyioViewModel(
     private fun sceneServers(): List<SceneServer> {
         val aggregateMode = isAggregate.value
         val activeServer = currentServer.value
+        val allowed = sceneAllowedOutputs.value
         return servers.value.map { s ->
             val per = if (aggregateMode) _aggregate.value.perServer[s.id]
             else if (s.id == activeServer?.id) _ui.value else null
@@ -1104,12 +1116,20 @@ class MyioViewModel(
                 covers = cov,
                 hiddenKeys = s.hiddenOutputs.toSet(),
                 connected = per?.status == ConnectionStatus.Connected,
+                allowedKeys = AccessControl.keysOf(allowed, s.id),
             )
         }
     }
 
-    /** Snapshot of what is on right now (aggregate: all polled Connected servers; single: the active one). */
+    /**
+     * Snapshot of what is on right now and allowed in scenes (aggregate: all polled Connected servers; single:
+     * the active one).
+     */
     fun prepareSceneCapture(): SceneCapture = SceneControl.capture(sceneServers())
+
+    /** [capture] grouped by zone for the capture checklist (global zone + member order). */
+    fun sceneCandidateGroups(capture: SceneCapture): List<SceneCandidateGroup> =
+        SceneControl.candidateGroups(capture, sceneServers(), globalZones.value, allAssignments.value, zoneOrder.value)
 
     /** Default name proposal for a new scene ("Jelenet N"). */
     fun defaultSceneName(): String = SceneControl.defaultName(scenes.value)
@@ -1135,11 +1155,13 @@ class MyioViewModel(
     fun removeSceneEntry(scene: Scene, entry: SceneEntry) =
         editScene(scene.id) { it.copy(entries = it.entries - entry) }
 
-    /** Replace the scene's entries with the current on-state (entries of servers not reachable now are kept). */
-    fun overwriteScene(scene: Scene) {
-        val capture = prepareSceneCapture()
-        if (capture.entries.isEmpty()) { postSceneMessage("Nincs bekapcsolt kimenet — a jelenet nem módosult."); return }
-        editScene(scene.id) { it.copy(entries = SceneControl.mergeCapture(it.entries, capture)) }
+    /**
+     * Replace the scene's entries with the checked part of a fresh [capture] (entries of servers not reachable
+     * now are kept) and apply the (possibly edited) [name].
+     */
+    fun overwriteScene(scene: Scene, name: String, capture: SceneCapture) {
+        val n = name.trim()
+        editScene(scene.id) { it.copy(name = n.ifEmpty { it.name }, entries = SceneControl.mergeCapture(it.entries, capture)) }
     }
 
     fun deleteScene(scene: Scene) {

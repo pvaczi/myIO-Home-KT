@@ -160,6 +160,9 @@ fun MainScreen(
     // Per-output protection (expert): protected keys of the current server + the toggle.
     protectedKeys: Set<String> = emptySet(),
     onToggleOutputProtected: (outputKey: String) -> Unit = {},
+    // Scene allow-list ("Jelenetbe kerülhet", expert): allowed keys of the current server + the toggle.
+    sceneAllowedKeys: Set<String> = emptySet(),
+    onToggleOutputSceneAllowed: (outputKey: String) -> Unit = {},
     // Disabled-cover endpoint keys (coverKey → P/R keys) so a hidden/zoned cover that's been demoted to
     // "not a cover" keeps hiding/zoning its now-plain outputs. Single server; per-server for the aggregate.
     disabledCoverMembers: Map<String, List<String>> = emptyMap(),
@@ -236,7 +239,8 @@ fun MainScreen(
         expandHiddenForDisabledCovers(currentServer?.hiddenOutputs?.toSet() ?: emptySet(), disabledCoverMembers)
     }
     val hideUi = HideUi(hideMode = hideMode, hiddenKeys = hiddenKeys, onToggleHidden = onToggleOutputHidden,
-        protectedKeys = protectedKeys, onToggleProtected = onToggleOutputProtected)
+        protectedKeys = protectedKeys, onToggleProtected = onToggleOutputProtected,
+        sceneAllowedKeys = sceneAllowedKeys, onToggleSceneAllowed = onToggleOutputSceneAllowed)
     val homeExclude = if (expertMode) emptySet() else hiddenKeys
     val aggregateHiddenByServer = remember(expertMode, servers, aggregateDisabledMembers) {
         if (expertMode) emptyMap()
@@ -598,10 +602,11 @@ fun MainScreen(
                                 sceneActions = sceneActions,
                                 expertMode = expertMode,
                             )
-                            Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            // The switchable-output tabs also carry the scene allow-list toggle (covers / sensors don't).
+                            Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = true) {
                                 RelayControlTile(it, actions, controlsEnabled)
                             }
-                            Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = true) {
                                 PcaControlTile(it, actions, controlsEnabled)
                             }
                             // Like the other type tabs: a live CoverTile normally, but assignable into
@@ -609,7 +614,7 @@ fun MainScreen(
                             Tab.COVERS -> TypeTabList(covers, Icons.Filled.Blinds, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 CoverTile(it, controlsEnabled, expertMode, coverActions)
                             }
-                            Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
+                            Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = true) {
                                 PwmControlTile(it, actions, controlsEnabled)
                             }
                             Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Sensors, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {

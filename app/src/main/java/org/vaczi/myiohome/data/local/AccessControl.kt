@@ -30,15 +30,16 @@ object AccessControl {
 
     /**
      * Refs a scene run touches: its entries, plus — when it also switches the others off — every protected
-     * output of the servers it touches (those would be turned off too, so they count as affected).
+     * output of the servers it touches (those would be turned off too, so they count as affected). Only
+     * [allowedRefs] ("Jelenetbe kerülhet") count: the run skips every other output.
      */
-    fun sceneRefs(entryRefs: List<String>, turnOthersOff: Boolean, protectedRefs: Set<String>): List<String> {
-        if (!turnOthersOff) return entryRefs
+    fun sceneRefs(entryRefs: List<String>, turnOthersOff: Boolean, protectedRefs: Set<String>, allowedRefs: Set<String>): List<String> {
         val servers = entryRefs.map(::memberRefServer).toSet()
-        return entryRefs + protectedRefs.filter { memberRefServer(it) in servers }
+        val refs = if (!turnOthersOff) entryRefs else entryRefs + protectedRefs.filter { memberRefServer(it) in servers }
+        return refs.filter { it in allowedRefs }
     }
 
-    /** The output keys of [protectedRefs] that belong to [serverId]. */
-    fun keysOf(protectedRefs: Set<String>, serverId: String): Set<String> =
-        protectedRefs.filter { memberRefServer(it) == serverId }.map(::memberRefKey).toSet()
+    /** The output keys of [refs] (protected or scene-allowed set) that belong to [serverId]. */
+    fun keysOf(refs: Set<String>, serverId: String): Set<String> =
+        refs.filter { memberRefServer(it) == serverId }.map(::memberRefKey).toSet()
 }

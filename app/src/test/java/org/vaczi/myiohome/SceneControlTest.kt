@@ -6,6 +6,8 @@ import org.junit.Test
 import org.vaczi.myiohome.data.local.Scene
 import org.vaczi.myiohome.data.local.SceneEntry
 import org.vaczi.myiohome.data.local.SceneStore
+import org.vaczi.myiohome.data.local.Zone
+import org.vaczi.myiohome.data.local.ZoneAssignments
 import org.vaczi.myiohome.data.model.Cover
 import org.vaczi.myiohome.data.model.CoverOutputType
 import org.vaczi.myiohome.data.model.CoverState
@@ -13,6 +15,7 @@ import org.vaczi.myiohome.data.model.PcaOutput
 import org.vaczi.myiohome.data.model.PwmOutput
 import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.model.outputKey
 import org.vaczi.myiohome.ui.SceneCapture
 import org.vaczi.myiohome.ui.SceneControl
 import org.vaczi.myiohome.ui.SceneOutcome
@@ -41,7 +44,8 @@ class SceneControlTest {
         ),
         pwms = listOf(PwmOutput(101, "Szalag", state = 40)),
     )
-    private val a = SceneServer("a", "Fűtés", state, listOf(cover), hiddenKeys = setOf("R5"))
+    private val allKeys = (state.relays.map { it.outputKey() } + state.pcas.map { it.outputKey() } + state.pwms.map { it.outputKey() }).toSet()
+    private val a = SceneServer("a", "Fűtés", state, listOf(cover), hiddenKeys = setOf("R5"), allowedKeys = allKeys)
 
     @Test
     fun captureTakesOnlyEligibleOnOutputs() {
@@ -128,7 +132,7 @@ class SceneControlTest {
     @Test
     fun summaryWording() {
         val b = SceneServer("b", "Redőny", state, connected = false)
-        val c = SceneServer("c", "Fűtés2", state)
+        val c = SceneServer("c", "Fűtés2", state, allowedKeys = allKeys)
         val scene = Scene(name = "Este", entries = listOf(
             SceneEntry("a", "R2", 1), SceneEntry("c", "R2", 1), SceneEntry("b", "R2", 1), SceneEntry("a", "R99", 1),
         ))
@@ -141,6 +145,75 @@ class SceneControlTest {
             "„Este”: 1 szerver kész, kihagyva: Redőny (nem elérhető), nem sikerült: Fűtés2, 1 kimenet már nem létezik",
             SceneControl.summary("Este", plan, listOf("Fűtés" to SceneOutcome.OK, "Fűtés2" to SceneOutcome.FAILED)),
         )
+    }
+
+    @Test
+    fun captureExcludesOutputsNotAllowedInScenes() {
+        val c = SceneControl.capture(listOf(a.copy(allowedKeys = setOf("R1", "P2002"))))
+        assertEquals(listOf(SceneEntry("a", "R1", 1), SceneEntry("a", "P2002", 90)), c.entries)
+        // Nothing marked → no candidate at all (the UI shows the hint instead of the checklist).
+        assertEquals(emptyList<SceneEntry>(), SceneControl.capture(listOf(a.copy(allowedKeys = emptySet()))).entries)
+    }
+
+    @Test
+    fun planSkipsAndCountsEntriesNotAllowed() {
+        val server = a.copy(allowedKeys = allKeys - "R2")
+        val scene = Scene(name = "Este", entries = listOf(SceneEntry("a", "R2", 1), SceneEntry("a", "P2001", 255)))
+        val plan = SceneControl.plan(scene, listOf(server))
+        assertEquals(listOf("PCA_ON=2001"), plan.servers[0].fragments)
+        assertEquals(1, plan.notAllowed)
+        assertEquals(0, plan.missing)
+        assertEquals(
+            "„Este”: 1 szerver kész, 1 kimenet nincs jelenetbe jelölve, kihagyva",
+            SceneControl.summary("Este", plan, plan.servers.map { it.serverName to SceneOutcome.OK }),
+        )
+    }
+
+    @Test
+    fun turnOthersOffNeverTargetsOutputsNotAllowed() {
+        val server = a.copy(allowedKeys = allKeys - setOf("R6", "P2002"))
+        val scene = Scene(name = "Egy", entries = listOf(SceneEntry("a", "R1", 1)), turnOthersOff = true)
+        val plan = SceneControl.plan(scene, listOf(server))
+        // R6 (e.g. a circulation pump) and P2002 are on but not allowed → never switched off.
+        assertEquals(listOf("PCA_OFF=2001", "f_OFF=1", "r_ON=1"), plan.servers[0].fragments)
+        val after = plan.servers[0].optimistic(state)
+        assertTrue(after.relays.first { it.id == 6 }.on)
+        assertEquals(90, after.pcas.first { it.id == 2002 }.state)
+    }
+
+    @Test
+    fun candidateGroupsFollowZoneOrderAndDisambiguateServers() {
+        val b = SceneServer(
+            "b", "Világítás",
+            ServerState(relays = listOf(RelayOutput(1, "Be", on = true), RelayOutput(2, "Egyedi", on = true))),
+            allowedKeys = setOf("R1", "R2"),
+        )
+        val capture = SceneControl.capture(listOf(a, b))
+        val zones = listOf(Zone(id = "z1", name = "Nappali"), Zone(id = "z2", name = "Konyha"))
+        val assignments = mapOf(
+            "a" to ZoneAssignments(mapOf("R1" to listOf("z2", "z1"), "P2001" to listOf("z2"), "R6" to listOf("z1"))),
+            "b" to ZoneAssignments(mapOf("R2" to listOf("z1"), "R1" to listOf("deleted-zone"))),
+        )
+        val zoneOrder = mapOf("z1" to listOf("b|R2", "a|R6"))
+        val groups = SceneControl.candidateGroups(capture, listOf(a, b), zones, assignments, zoneOrder)
+
+        assertEquals(listOf("Nappali", "Konyha", "Zóna nélkül"), groups.map { it.title })
+        assertEquals(listOf(null), groups.filter { it.title == "Zóna nélkül" }.map { it.zoneId })
+        // R1 is in z2 and z1 → listed once, under z1 (first in the global zone order); saved member order first.
+        assertEquals(listOf("b|R2", "a|R6", "a|R1"), groups[0].items.map { it.ref })
+        assertEquals(listOf("Egyedi", "Másik be", "Fűtés · Be"), groups[0].items.map { it.label })
+        assertEquals(listOf("Lámpa"), groups[1].items.map { it.label })
+        // Unknown zone id → unzoned; capture order kept. "Be" exists on both servers → server prefix.
+        assertEquals(listOf("Dimm", "Szalag", "Világítás · Be"), groups[2].items.map { it.label })
+
+        val all = SceneControl.defaultSelection(groups)
+        assertEquals(capture.entries.map { "${it.serverId}|${it.outputKey}" }.toSet(), all)
+        val withoutZ1 = SceneControl.toggleGroup(all, groups[0])
+        assertEquals(all - setOf("b|R2", "a|R6", "a|R1"), withoutZ1)
+        assertEquals(all, SceneControl.toggleGroup(withoutZ1 + "a|R6", groups[0])) // partial → whole group on
+        val chosen = SceneControl.selectedCapture(capture, withoutZ1)
+        assertEquals(4, chosen.entries.size)
+        assertEquals(setOf("a", "b"), chosen.serverIds)
     }
 
     @Test

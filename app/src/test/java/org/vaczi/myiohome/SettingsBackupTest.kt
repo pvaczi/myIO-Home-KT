@@ -226,6 +226,20 @@ class SettingsBackupTest {
         val old = SettingsBackup.decode("""{"format":"myio-home-settings","version":1,"full":true,"expertMode":true}""")!!
         assertNull(old.appLock)
         assertNull(old.protectedOutputs)
+        assertNull(old.sceneAllowedOutputs)
+    }
+
+    @Test
+    fun fullBackupRoundTripsSceneAllowedOutputsShareDoesNot() {
+        val refs = listOf("s1|R1", "s1|P2001")
+        val full = SettingsBackup.decode(
+            SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), full = true, sceneAllowedOutputs = refs),
+        )!!
+        assertEquals(refs, full.sceneAllowedOutputs)
+        val share = SettingsBackup.decode(
+            SettingsBackup.encode(AppTheme.GREEN, emptyList(), emptyList(), emptyMap(), sceneAllowedOutputs = refs),
+        )!!
+        assertNull(share.sceneAllowedOutputs)
     }
 
     @Test

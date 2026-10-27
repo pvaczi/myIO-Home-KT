@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Blinds
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -107,12 +108,16 @@ data class HideUi(
     /** Output keys of the current server that need an authentication to control (see AccessControl). */
     val protectedKeys: Set<String> = emptySet(),
     val onToggleProtected: (String) -> Unit = {},
+    /** Output keys of the current server marked "Jelenetbe kerülhet" (scene allow-list) + the toggle. */
+    val sceneAllowedKeys: Set<String> = emptySet(),
+    val onToggleSceneAllowed: (String) -> Unit = {},
 )
 
 /**
  * One type tab (Relék / PCA / Dimmerek / Szenzorok): the named items in a 2-column grid. Each tile is a
  * live [control] normally, a uniform [HideableTile] in visibility mode, or an [AssignableTile] in assign
  * mode. Hidden (non-expert) and already-zoned (assign + hideZoned) items are filtered out first.
+ * [sceneToggle] = the visibility tiles also get the "Jelenetbe kerülhet" toggle (switchable outputs only).
  */
 @Composable
 internal fun <T> TypeTabList(
@@ -123,6 +128,7 @@ internal fun <T> TypeTabList(
     zoneUi: ZoneUi,
     hideUi: HideUi,
     expertMode: Boolean,
+    sceneToggle: Boolean = false,
     control: @Composable (T) -> Unit,
 ) = TileGrid(
     items.filter { name(it).isNotBlank() }
@@ -131,7 +137,7 @@ internal fun <T> TypeTabList(
         .filterByName(zoneUi, name),
 ) { item ->
     when {
-        hideUi.hideMode -> HideableTile(name(item), icon, key(item), hideUi)
+        hideUi.hideMode -> HideableTile(name(item), icon, key(item), hideUi, sceneToggle)
         zoneUi.assignMode -> AssignableTile(name(item), icon, key(item), zoneUi)
         else -> control(item)
     }
@@ -559,12 +565,14 @@ private fun AssignableTile(name: String, icon: ImageVector, outputKey: String, z
 /**
  * Uniform tile shown in visibility mode (replaces the control tiles): icon + name + an eye/eye-off badge.
  * Hidden outputs render struck-through and dimmed; one tap toggles the hidden flag. Used on the type tabs
- * only (the home/aggregate dashboards just filter hidden outputs out in non-expert mode).
+ * only (the home/aggregate dashboards just filter hidden outputs out in non-expert mode). [sceneToggle] adds
+ * the "Jelenetbe kerülhet" button next to the shield.
  */
 @Composable
-private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi) {
+private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hideUi: HideUi, sceneToggle: Boolean = false) {
     val hidden = outputKey in hideUi.hiddenKeys
     val protectedOut = outputKey in hideUi.protectedKeys
+    val sceneAllowed = outputKey in hideUi.sceneAllowedKeys
     Surface(
         // Edit-mode highlight is an outline, never a fill: a filled container reads as the "ON" of the live tiles.
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -588,6 +596,16 @@ private fun HideableTile(name: String, icon: ImageVector, outputKey: String, hid
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (sceneToggle) {
+                IconButton(onClick = { hideUi.onToggleSceneAllowed(outputKey) }, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = if (sceneAllowed) "Jelenetbe kerülhet" else "Jelenetbe nem kerülhet",
+                        tint = if (sceneAllowed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             IconButton(onClick = { hideUi.onToggleProtected(outputKey) }, modifier = Modifier.size(28.dp)) {
                 Icon(
                     Icons.Filled.Shield,

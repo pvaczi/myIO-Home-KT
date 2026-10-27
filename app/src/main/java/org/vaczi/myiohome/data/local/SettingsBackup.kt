@@ -48,6 +48,8 @@ data class SettingsBackup(
     val appLock: Boolean? = null,
     /** Protected outputs as `serverId|outputKey` refs (full backup only; null = absent → untouched). */
     val protectedOutputs: List<String>? = null,
+    /** "Jelenetbe kerülhet" outputs as `serverId|outputKey` refs (full backup only; null = absent → untouched). */
+    val sceneAllowedOutputs: List<String>? = null,
 ) {
     companion object {
         const val MAGIC = "myio-home-settings"
@@ -74,6 +76,7 @@ data class SettingsBackup(
             lastTabs: Map<String, String> = emptyMap(),
             appLock: Boolean? = null,
             protectedOutputs: List<String>? = null,
+            sceneAllowedOutputs: List<String>? = null,
         ): String = json.encodeToString(
             serializer(),
             // Sharing: forSharing() swaps in each slot's optional share credentials (e.g. family) so the
@@ -94,6 +97,7 @@ data class SettingsBackup(
                 lastTabs = if (full) lastTabs else emptyMap(),
                 appLock = if (full) appLock else null,
                 protectedOutputs = if (full) protectedOutputs else null,
+                sceneAllowedOutputs = if (full) sceneAllowedOutputs else null,
             ),
         )
 

@@ -39,10 +39,17 @@ class AccessControlTest {
 
     @Test fun sceneRefsIncludeProtectedOthersOnTouchedServersOnly() {
         val entries = listOf(memberRef("s1", "R1"))
-        assertEquals(entries, AccessControl.sceneRefs(entries, false, prot))
-        val all = AccessControl.sceneRefs(entries, true, prot)
+        val allowed = entries.toSet() + prot
+        assertEquals(entries, AccessControl.sceneRefs(entries, false, prot, allowed))
+        val all = AccessControl.sceneRefs(entries, true, prot, allowed)
         assertTrue(memberRef("s1", "R3") in all)
         assertFalse(memberRef("s2", "C5") in all)
+    }
+
+    @Test fun sceneRefsIgnoreOutputsNotAllowedInScenes() {
+        val entries = listOf(memberRef("s1", "R1"), memberRef("s1", "R2"))
+        // R2 (entry) and R3 (protected other) are not "Jelenetbe kerülhet" → the run skips them, no auth for them.
+        assertEquals(listOf(memberRef("s1", "R1")), AccessControl.sceneRefs(entries, true, prot, setOf(memberRef("s1", "R1"))))
     }
 
     @Test fun keysOfFiltersByServer() {

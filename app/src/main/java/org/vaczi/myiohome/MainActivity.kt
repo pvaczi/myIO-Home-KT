@@ -203,6 +203,7 @@ class MainActivity : FragmentActivity() {
                 val aggregateCovers by viewModel.aggregateCovers.collectAsStateWithLifecycle()
                 val aggregateDisabledMembers by viewModel.aggregateDisabledMembers.collectAsStateWithLifecycle()
                 val protectedRefs by viewModel.protectedOutputs.collectAsStateWithLifecycle()
+                val sceneAllowedRefs by viewModel.sceneAllowedOutputs.collectAsStateWithLifecycle()
                 val aggregateCoverActionsFor: (String) -> CoverActions = { serverId ->
                     guardedCoverActions(
                         serverId, protectedRefs,
@@ -243,11 +244,12 @@ class MainActivity : FragmentActivity() {
                     scenes = scenes,
                     onRun = { scene ->
                         val refs = AccessControl.sceneRefs(
-                            scene.entries.map { memberRef(it.serverId, it.outputKey) }, scene.turnOthersOff, protectedRefs,
+                            scene.entries.map { memberRef(it.serverId, it.outputKey) }, scene.turnOthersOff, protectedRefs, sceneAllowedRefs,
                         )
                         guarded(refs) { viewModel.runScene(scene) }
                     },
                     onPrepareCapture = viewModel::prepareSceneCapture,
+                    candidateGroups = viewModel::sceneCandidateGroups,
                     defaultName = viewModel::defaultSceneName,
                     onAdd = viewModel::addScene,
                     onRename = viewModel::renameScene,
@@ -295,6 +297,10 @@ class MainActivity : FragmentActivity() {
                             onToggleOutputHidden = viewModel::toggleOutputHidden,
                             protectedKeys = AccessControl.keysOf(protectedRefs, singleId),
                             onToggleOutputProtected = { key -> toggleProtected(singleId, key, protectedRefs) },
+                            sceneAllowedKeys = AccessControl.keysOf(sceneAllowedRefs, singleId),
+                            onToggleOutputSceneAllowed = { key ->
+                                viewModel.setOutputSceneAllowed(singleId, key, memberRef(singleId, key) !in sceneAllowedRefs)
+                            },
                             disabledCoverMembers = disabledCoverMembers,
                             aggregateDisabledMembers = aggregateDisabledMembers,
                             zoneConfig = zoneConfig,
