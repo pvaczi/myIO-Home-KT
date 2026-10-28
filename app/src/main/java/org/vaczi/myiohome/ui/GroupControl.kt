@@ -21,7 +21,7 @@ enum class CoverMove { OPEN, CLOSE, STOP }
 /**
  * The eligible members of one server's slice of a zone. Eligible = writable (never command an output the
  * user may not switch), not a cover endpoint (the cover is the member), and not thermostat-controlled
- * (`sensorId != 0`: the thermostat would override the command on its next cycle).
+ * (sensor-driven, `sensorId` 1..254: the thermostat would override the command on its next cycle; the sun, 255, is a normal output).
  */
 data class GroupMembers(
     val relays: List<RelayOutput> = emptyList(),
@@ -39,9 +39,9 @@ data class GroupMembers(
 fun groupMembers(state: ServerState, covers: List<Cover>, keys: Set<String>): GroupMembers {
     val coverIds = covers.memberIds()
     return GroupMembers(
-        relays = state.relays.filter { it.id !in coverIds && it.writable && it.sensorId == 0 && it.outputKey() in keys },
-        pcas = state.pcas.filter { it.id !in coverIds && it.writable && it.sensorId == 0 && it.outputKey() in keys },
-        pwms = state.pwms.filter { it.writable && it.sensorId == 0 && it.outputKey() in keys },
+        relays = state.relays.filter { it.id !in coverIds && it.writable && !it.isSensorDriven && it.outputKey() in keys },
+        pcas = state.pcas.filter { it.id !in coverIds && it.writable && !it.isSensorDriven && it.outputKey() in keys },
+        pwms = state.pwms.filter { it.writable && !it.isSensorDriven && it.outputKey() in keys },
         covers = covers.filter { it.writable && it.outputKey() in keys },
     )
 }

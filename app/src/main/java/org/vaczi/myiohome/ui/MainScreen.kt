@@ -603,10 +603,10 @@ fun MainScreen(
                                 expertMode = expertMode,
                             )
                             // The switchable-output tabs also carry the scene allow-list toggle (covers / sensors don't).
-                            Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && it.sensorId == 0 }) {
+                            Tab.RELAYS -> TypeTabList(displayRelays, Icons.Filled.Power, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && !it.isSensorDriven }) {
                                 RelayControlTile(it, actions, controlsEnabled)
                             }
-                            Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && it.sensorId == 0 }) {
+                            Tab.PCA -> TypeTabList(displayPcas, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && !it.isSensorDriven }) {
                                 PcaControlTile(it, actions, controlsEnabled)
                             }
                             // Like the other type tabs: a live CoverTile normally, but assignable into
@@ -614,7 +614,7 @@ fun MainScreen(
                             Tab.COVERS -> TypeTabList(covers, Icons.Filled.Blinds, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {
                                 CoverTile(it, controlsEnabled, expertMode, coverActions)
                             }
-                            Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && it.sensorId == 0 }) {
+                            Tab.DIMMERS -> TypeTabList(ui.state.pwms, Icons.Filled.Lightbulb, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode, sceneToggle = { it.writable && !it.isSensorDriven }) {
                                 PwmControlTile(it, actions, controlsEnabled)
                             }
                             Tab.SENSORS -> TypeTabList(ui.state.sensors, Icons.Filled.Sensors, { it.outputKey() }, { it.name }, zoneUi, hideUi, expertMode) {

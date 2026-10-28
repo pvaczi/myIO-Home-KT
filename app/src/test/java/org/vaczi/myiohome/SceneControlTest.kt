@@ -62,6 +62,18 @@ class SceneControlTest {
     }
 
     @Test
+    fun captureIncludesSunControlledButNotSensorDriven() {
+        val st = ServerState(
+            relays = listOf(
+                RelayOutput(1, "Nincs", on = true),
+                RelayOutput(2, "Nap", on = true, sensorId = 255),
+                RelayOutput(3, "Szenzor", on = true, sensorId = 5),
+            ),
+        )
+        val srv = SceneServer("a", "Kert", st, emptyList(), allowedKeys = setOf("R1", "R2", "R3"))
+        assertEquals(listOf(SceneEntry("a", "R1", 1), SceneEntry("a", "R2", 1)), SceneControl.capture(listOf(srv)).entries)
+    }
+    @Test
     fun overwriteKeepsEntriesOfServersNotCaptured() {
         val old = listOf(SceneEntry("a", "R9", 1), SceneEntry("b", "R1", 1))
         val merged = SceneControl.mergeCapture(old, SceneCapture(listOf(SceneEntry("a", "R1", 1)), setOf("a")))

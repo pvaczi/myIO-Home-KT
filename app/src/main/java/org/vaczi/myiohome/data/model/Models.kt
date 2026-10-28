@@ -7,7 +7,8 @@ import kotlinx.serialization.Serializable
  *
  * Mirrors the proven C++ bridge model (myIO-bridge `src/common/types.hpp`), adapted to the
  * port-80 JSON endpoints (`sens_out.json` = state only, `d_sens_out.json` = state + names).
- * Thermostat control is expressed by [sensorId] != 0 (the original app's "controlled relays").
+ * [sensorId]: 0 = no activator, 255 = the SUN (sunrise/sunset time automation; the output is still an ordinary,
+ * manually switchable lamp), 1..254 = a sensor id (thermostat-style control, see [isSensorDriven]).
  *
  * These are [Serializable] so the last [ServerState] can be cached to disk for instant startup
  * (see StateCacheStore); only constructor properties are persisted, not the computed helpers.
@@ -28,7 +29,10 @@ data class RelayOutput(
     val sensorOnTenths: Int = 0,   // ×10 → °C (e.g. 230 = 23.0 °C)
     val sensorOffTenths: Int = 0,
     val writable: Boolean = true,
-)
+) {
+    /** True if a sensor (id 1..254) drives this output; 0 (none) and 255 (sun automation) are NOT sensor-driven. */
+    val isSensorDriven: Boolean get() = sensorId in 1..254
+}
 
 /**
  * PCA output (id 2001..2128). state 0..255; isPwm = brightness controllable.
@@ -48,6 +52,8 @@ data class PcaOutput(
     val writable: Boolean = true,
 ) {
     val on: Boolean get() = state != 0
+    /** True if a sensor (id 1..254) drives this output; 0 (none) and 255 (sun automation) are NOT sensor-driven. */
+    val isSensorDriven: Boolean get() = sensorId in 1..254
 }
 
 /**
@@ -67,6 +73,8 @@ data class PwmOutput(
     val writable: Boolean = true,
 ) {
     val on: Boolean get() = state != 0
+    /** True if a sensor (id 1..254) drives this output; 0 (none) and 255 (sun automation) are NOT sensor-driven. */
+    val isSensorDriven: Boolean get() = sensorId in 1..254
 }
 
 @Serializable

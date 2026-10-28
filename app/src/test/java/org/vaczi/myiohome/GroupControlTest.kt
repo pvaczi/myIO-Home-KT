@@ -55,6 +55,19 @@ class GroupControlTest {
     }
 
     @Test
+    fun sunControlledOutputIsEligibleButSensorDrivenIsNot() {
+        val st = ServerState(
+            relays = listOf(RelayOutput(1, "Nincs", on = false), RelayOutput(2, "Nap", on = false, sensorId = 255), RelayOutput(3, "Szenzor", on = false, sensorId = 254)),
+            pcas = listOf(PcaOutput(2001, "Nap", state = 0, sensorId = 255), PcaOutput(2002, "Szenzor", state = 0, sensorId = 1)),
+            pwms = listOf(PwmOutput(101, "Nap", state = 0, sensorId = 255), PwmOutput(102, "Szenzor", state = 0, sensorId = 7)),
+        )
+        val keys = setOf("R1", "R2", "R3", "P2001", "P2002", "F101", "F102")
+        val m = groupMembers(st, emptyList(), keys)
+        assertEquals(listOf(1, 2), m.relays.map { it.id })
+        assertEquals(listOf(2001), m.pcas.map { it.id })
+        assertEquals(listOf(101), m.pwms.map { it.id })
+    }
+    @Test
     fun onlyZoneKeysAreSelected() {
         val m = groupMembers(state, emptyList(), setOf("R1", "F101", "P9999"))
         assertEquals(listOf(1), m.relays.map { it.id })
