@@ -70,4 +70,4 @@ szerverek felé párhuzamos. Android 17-től az app a helyi hálózati engedély
 
 ## Licenc
 
-Privát projekt.
+MIT — lásd [LICENSE](LICENSE).
