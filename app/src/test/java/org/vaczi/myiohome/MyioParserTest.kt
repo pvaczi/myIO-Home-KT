@@ -23,6 +23,18 @@ class MyioParserTest {
         }.bufferedReader().use { it.readText() }
 
     @Test
+    fun dropsIdOnlyEntriesTheUserCannotRead() {
+        val body = """{"relays":{"0":{"id":1,"state":1},"1":{"id":2}},
+            "PCA":{"0":{"id":2001,"state":128,"pwm":1},"1":{"id":2002}},
+            "PWM":{"0":{"id":101,"state":5},"1":{"id":102}},"sensors":{}}"""
+        val state = MyioParser.parseState(body)
+        assertEquals(listOf(1), state.relays.map { it.id })
+        assertTrue(state.relays.single().on)
+        assertEquals(listOf(2001), state.pcas.map { it.id })
+        assertEquals(listOf(101), state.pwms.map { it.id })
+    }
+
+    @Test
     fun parsesInfo() {
         val info = MyioParser.parseInfo(fixture("info-futes.json"))
         assertEquals("AB12-3456-7890-Xy00", info.serial)

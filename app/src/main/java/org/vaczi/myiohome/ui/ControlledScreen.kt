@@ -290,10 +290,10 @@ private class ControlledItem(
 
 /**
  * The controlling temperature/humidity sensor for an activator id, or null for non-thermostat ones.
- * `0` and `255` are the firmware's "no thermostat" sentinels (the official web theme guards both:
- * `activator > 0 && activator < 255`). The sensor cross-reference below already excludes them
- * implicitly (no real sensor has id 0 or 255), but we guard 255 explicitly as belt-and-suspenders
- * against a firmware that might report it alongside a stray sensor entry.
+ * Activator `0` = none; `255` = the SUN (sunrise/sunset activator, not a sensor); `1..254` = a sensor id
+ * (the official web theme guards the same range: `activator > 0 && activator < 255`). A sun-controlled
+ * output is not a thermostat, so 255 yields null here; elsewhere (group control, scenes) it still counts
+ * as automation-controlled, because the sun logic overrides manual commands.
  */
 private fun ServerState.controllingSensor(sensorId: Int): Sensor? =
     if (sensorId <= 0 || sensorId >= 255) null

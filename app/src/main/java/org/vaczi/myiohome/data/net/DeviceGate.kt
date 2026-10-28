@@ -6,7 +6,8 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Process-wide serialization point for one physical myIO device (host:port).
  *
- * The device (W5100, 4 sockets) can't take concurrent connections, and more than one client object may
+ * Before fw 3.12 the device serves ONE connection at a time on port 80 (a concurrent second one may be
+ * reset), and more than one client object may
  * target the same device at once: the single-server and aggregate poll loops overlap briefly on a switch,
  * two slots may share a host, and discovery's name lookup hits port 80 of devices that are being polled.
  * A per-repository lock covers none of these, so every connection to a device goes through the one gate

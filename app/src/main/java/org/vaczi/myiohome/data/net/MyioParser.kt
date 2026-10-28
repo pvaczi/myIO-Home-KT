@@ -12,7 +12,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * Parses the myIO port-80 JSON responses into domain models.
- * Tolerant of the unknown/extra fields present in `d_sens_out.json`.
+ * Tolerant of unknown/extra fields. An output entry without `state` (bare `{"id":N}`: the user lacks read
+ * permission) is dropped, never shown as an OFF output.
  */
 object MyioParser {
 
@@ -26,6 +27,7 @@ object MyioParser {
         return ServerState(
             relays = root.relays.values
                 .sortedBy { it.id }
+                .filter { it.state != null }
                 .map {
                     RelayOutput(
                         id = it.id,
@@ -38,11 +40,12 @@ object MyioParser {
                 },
             pcas = root.pca.values
                 .sortedBy { it.id }
+                .filter { it.state != null }
                 .map {
                     PcaOutput(
                         id = it.id,
                         name = it.description.orEmpty(),
-                        state = it.state,
+                        state = it.state ?: 0,
                         isPwm = it.pwm == 1,
                         sensorId = it.sensor,
                         sensorOnTenths = it.sensorON,
@@ -53,11 +56,12 @@ object MyioParser {
                 },
             pwms = root.pwm.values
                 .sortedBy { it.id }
+                .filter { it.state != null }
                 .map {
                     PwmOutput(
                         id = it.id,
                         name = it.description.orEmpty(),
-                        state = it.state,
+                        state = it.state ?: 0,
                         sensorId = it.sensor,
                         sensorOnTenths = it.sensorON,
                         sensorOffTenths = it.sensorOFF,

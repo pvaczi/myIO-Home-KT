@@ -14,24 +14,22 @@ import java.util.concurrent.atomic.AtomicInteger
 data class DiscoveredServer(val host: String, val name: String?)
 
 /**
- * Discovers myIO servers on a /24 by an auth-free TCP probe.
+ * Discovers myIO servers on a /24 by an auth-free port-80 probe.
  *
- * **Identification (auth-free):** port 843 (the myIO "application port") is otherwise virtually never
- * open, so a successful TCP *connect* ≈ "a myIO is here". We never speak the 843 protocol — it's a
- * single connect/close, no payload, no continuous load (the reason 843 is otherwise avoided per the
- * project's design). The dead hosts cost only the connect timeout; each real myIO gets one handshake.
+ * **Identification (auth-free):** an unauthenticated raw `GET /` on port 80 is answered by the myIO
+ * firmware with `HTTP/1.1 401` and a fixed fingerprint in the headers (`Connnection:` with three n, and
+ * `realm="Secure Area"`); see [isMyioFingerprint]. One short exchange per live host; dead hosts cost only
+ * the connect timeout. Nothing is sent to any other port.
  *
  * **Name (auth-gated):** the server name is not exposed anywhere without credentials — info.json has
- * no name, and the 843 protocol requires `Base64(user:pass)` on its first line. So for each hit we
- * best-effort fetch the port-80 index page with the supplied credentials and read the name from its
- * `<title>` (format `myIO-<name> vezérlő - <page>`, confirmed on fw 3.7.5.1 / 3.9.1 — there is no
- * `MYIOname` JS var despite the API doc). If auth fails or the title doesn't match, the name is null
- * and the user names the slot — a graceful fallback, never an error.
+ * no name. So for each hit we best-effort fetch the port-80 index page with the supplied credentials and
+ * read the name from its `<title>` (format `myIO-<name> vezérlő - <page>`, confirmed on fw 3.7.5.1 / 3.9.1 —
+ * there is no `MYIOname` JS var despite the API doc). If auth fails or the title doesn't match, the name is
+ * null and the user names the slot — a graceful fallback, never an error.
  */
 class MyioDiscovery(
     private val connectTimeoutMs: Int = 600,
     private val concurrency: Int = 96,
-    private val probePort: Int = 843,
     private val httpPort: Int = 80,
 ) {
     @Suppress("OPT_IN_USAGE")
@@ -62,19 +60,43 @@ class MyioDiscovery(
     }
 
     /**
-     * The port-843 connect and, on a hit, the port-80 name lookup — both under one hold of the device's
-     * [DeviceGate]: the probe socket shares the W5100's four sockets with port 80, so neither may open beside
-     * a running poll of an already configured server, nor may a poll slip in between them.
+     * The unauthenticated port-80 probe and, on a hit, the name lookup — both under one hold of the
+     * device's [DeviceGate]: before fw 3.12 the device serves one connection at a time, so neither may open
+     * beside a running poll of an already configured server, nor may a poll slip in between them.
      */
     internal suspend fun probe(host: String, user: String, password: String): DiscoveredServer? =
         DeviceGate.of(host, httpPort).net.withLock {
-            if (isPortOpen(host, probePort)) DiscoveredServer(host, fetchNameUnlocked(host, user, password)) else null
+            if (probeFingerprint(host)) DiscoveredServer(host, fetchNameUnlocked(host, user, password)) else null
         }
 
-    private fun isPortOpen(host: String, port: Int): Boolean =
-        runCatching {
-            Socket().use { it.connect(InetSocketAddress(host, port), connectTimeoutMs); true }
-        }.getOrDefault(false)
+    /** Raw `GET /` without credentials; true when the answer carries the myIO fingerprint. Any failure = false. */
+    private fun probeFingerprint(host: String): Boolean = runCatching {
+        Socket().use { sock ->
+            sock.connect(InetSocketAddress(host, httpPort), connectTimeoutMs)
+            sock.soTimeout = 1_500
+            val req = "GET / HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n"
+            sock.getOutputStream().apply { write(req.toByteArray(Charsets.US_ASCII)); flush() }
+            isMyioFingerprint(readHead(sock.getInputStream()))
+        }
+    }.getOrDefault(false)
+
+    /** Reads up to the blank line ending the header block (CRLF or bare LF), at most 4 KiB. */
+    private fun readHead(input: java.io.InputStream): String {
+        val sb = StringBuilder()
+        while (sb.length < MAX_HEAD_CHARS) {
+            val c = input.read()
+            if (c < 0) break
+            sb.append(c.toChar())
+            if (endsHeaders(sb)) break
+        }
+        return sb.toString()
+    }
+
+    private fun endsHeaders(sb: CharSequence): Boolean {
+        val n = sb.length
+        if (n >= 2 && sb[n - 1] == '\n' && sb[n - 2] == '\n') return true
+        return n >= 4 && sb[n - 1] == '\n' && sb[n - 2] == '\r' && sb[n - 3] == '\n' && sb[n - 4] == '\r'
+    }
 
     /**
      * Best-effort port-80 name lookup; null on any failure (wrong creds, timeout, format mismatch). The
@@ -97,6 +119,21 @@ class MyioDiscovery(
 
     companion object {
         private val TITLE_REGEX = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE)
+        private const val MAX_HEAD_CHARS = 4096
+
+        /**
+         * True when [head] (status line + header block of an unauthenticated `GET /`) is a myIO answer:
+         * status `HTTP/1.1 401` AND the firmware's permanent fingerprint — the misspelled header
+         * `Connnection:` (three n) or `realm="Secure Area"`. Line endings may be CRLF or bare LF; only the
+         * header block (up to the first blank line) counts. Pure → unit-testable.
+         */
+        fun isMyioFingerprint(head: String): Boolean {
+            val normalized = head.replace("\r\n", "\n")
+            val statusLine = normalized.substringBefore('\n')
+            if (!statusLine.startsWith("HTTP/1.1 401")) return false
+            val headers = normalized.substringBefore("\n\n")
+            return "Connnection:" in headers || "realm=\"Secure Area\"" in headers
+        }
 
         /**
          * Extract the server name from the index page `<title>`. Confirmed format:

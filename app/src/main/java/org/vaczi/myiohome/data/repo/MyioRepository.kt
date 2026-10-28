@@ -23,8 +23,8 @@ import org.vaczi.myiohome.data.net.ServerConfig
  * own page); ones they can't write keep [org.vaczi.myiohome.data.model.RelayOutput.writable] = false so
  * the UI locks them. [saveSnapshot] persists a labeled state for the next launch.
  *
- * **Concurrency:** the myIO device (W5100, 4 sockets) can't take concurrent TCP connections and a POST
- * storm freezes it for ~1 minute, so every network call is serialized on the device's [DeviceGate] — shared
+ * **Concurrency:** before fw 3.12 the myIO device serves one connection at a time on port 80 and dense
+ * POSTs can make it unreachable for a while, so every network call is serialized on the device's [DeviceGate] — shared
  * by every repository (and discovery) talking to the same host:port, not just this instance — and
  * consecutive POSTs to the device are paced ≥ [POST_COOLDOWN_MS] apart. The pacing delay is held on the
  * gate's separate `postPace` lock (not `net`), so a poll can still slip in during the cooldown.
@@ -142,10 +142,9 @@ class MyioRepository(
 
     private fun cacheNames(s: ServerState) {
         // Merge, don't clobber: keep previously cached names for ids whose fresh name is blank or
-        // missing. The PCA name-bug (id > 2100) returns blank names from d_sens_out — they're only
-        // filled from the flaky HTTP/0.9 /p_desc.xml. Without this merge, a single failed p_desc fetch
-        // (or an empty d_sens response) would wipe good names and the affected tiles vanish from the
-        // grid (name.isNotBlank() filter) until a later refresh happens to succeed.
+        // missing. Without this merge, a single failed or partial index fetch would wipe good names and
+        // the affected tiles vanish from the grid (name.isNotBlank() filter) until a later refresh
+        // succeeds.
         //
         // The snapshot only holds outputs the user can read (non-readable ones were dropped before it was
         // saved), so seed permissions as readable, carrying each output's last-known writable flag. This

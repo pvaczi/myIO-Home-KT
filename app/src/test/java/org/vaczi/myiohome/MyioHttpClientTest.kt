@@ -4,7 +4,7 @@ import org.vaczi.myiohome.data.net.MyioHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Pins the per-request headers: an idle pooled socket would hold one of the W5100's four sockets. */
+/** Pins the per-request headers: an idle pooled socket would occupy the device's single connection slot. */
 class MyioHttpClientTest {
 
     @Test

@@ -232,7 +232,7 @@ fun ServerSettingsScreen(
 }
 
 /**
- * LAN scan dialog. Probes a /24 for myIO devices (auth-free, via the 843 connect; see [MyioDiscovery])
+ * LAN scan dialog. Probes a /24 for myIO devices (auth-free, via a port-80 request; see [MyioDiscovery])
  * and offers the hits as new slots. The supplied credentials are also used to label hits with their
  * `MYIOname` where they work, and become the new slot's credentials when added.
  */
@@ -262,7 +262,7 @@ private fun DiscoveryDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "A megadott /24 alháló (.1–.254) pásztázása a 843-as porton. A jelszó a nevek " +
+                    "A megadott /24 alháló (.1–.254) pásztázása a 80-as porton. A jelszó a nevek " +
                         "lekéréséhez kell — ahol nem jó, az eszköz IP-vel jelenik meg.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

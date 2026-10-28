@@ -32,6 +32,16 @@ class MyioIndexParserTest {
     }
 
     @Test
+    fun headerWithoutFetArrayYieldsEmptyPwmMaps() {
+        val m = MyioIndexParser.parse("<script>var relays=[111,100];\nvar PCA=[11255];</script>")
+        assertTrue(m.pwmPerms.isEmpty())
+        assertTrue(m.pwmTurnOn.isEmpty())
+        assertTrue(m.pwmTurnOff.isEmpty())
+        assertEquals(2, m.relayPerms.size)
+        assertEquals(1, m.pcaPerms.size)
+    }
+
+    @Test
     fun decodesRelayPermissions() {
         // relays=[101,100,101,...,0(=6th),...]: 3-digit RWS.
         assertEquals(Perm(readable = true, writable = false), meta.relayPerms[1])  // 101: view, no control

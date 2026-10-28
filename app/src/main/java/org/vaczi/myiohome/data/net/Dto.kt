@@ -7,8 +7,9 @@ import kotlinx.serialization.Serializable
  * Wire DTOs for the myIO port-80 JSON endpoints, captured from real firmware 3.7.5.1.
  *
  * Each state section is a JSON object keyed by 0-based index string ("0","1",...) whose values
- * carry the real device id. `sens_out.json` omits `description`; `d_sens_out.json` includes it
- * plus extra fields (inverse, alarm, timer, delay) which we ignore (ignoreUnknownKeys).
+ * carry the real device id. `sens_out.json` omits `description` and is filtered by the logged-in user's
+ * rights: an output the user may not read arrives as a bare `{"id":N}` — hence the nullable `state`
+ * (null = not readable; the parser drops it). Extra fields we do not use are ignored (ignoreUnknownKeys).
  */
 
 @Serializable
@@ -32,7 +33,7 @@ data class ProtectionDto(
 @Serializable
 data class RelayDto(
     val id: Int,
-    val state: Int = 0,
+    val state: Int? = null,
     val sensor: Int = 0,
     val sensorON: Int = 0,
     val sensorOFF: Int = 0,
@@ -42,7 +43,7 @@ data class RelayDto(
 @Serializable
 data class PcaDto(
     val id: Int,
-    val state: Int = 0,
+    val state: Int? = null,
     val pwm: Int = 0,
     val sensor: Int = 0,
     val sensorON: Int = 0,
@@ -55,7 +56,7 @@ data class PcaDto(
 @Serializable
 data class PwmDto(
     val id: Int,
-    val state: Int = 0,
+    val state: Int? = null,
     val sensor: Int = 0,
     val sensorON: Int = 0,
     val sensorOFF: Int = 0,
