@@ -18,7 +18,8 @@ android {
 
     signingConfigs {
         // Release upload-kulcs (Play App Signing). Aktív, ha a VACZI_* property-k ki vannak töltve
-        // (a fejlesztő gépén ~/.gradle/gradle.properties → Downloads/Keys/gradle.properties hardlinken át)
+        // Forrás: Gradle project property, így az ORG_GRADLE_PROJECT_<név> env is jó (build.ps1 a gépi
+        // vaultból adja `secret-run`-nal); tartalék: ~/.gradle/gradle.properties → Downloads/Keys/gradle.properties.
         // ÉS a keystore-fájl létezik. Más gépen / üres jelszónál a release a debug-kulcsra esik
         // vissza (lentebb), hogy a lokális :app:assembleRelease sose törjön el.
         create("release") {
