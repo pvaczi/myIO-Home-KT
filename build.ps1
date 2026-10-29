@@ -20,12 +20,14 @@ $gradleArgs = @('-p', $proj, ':app:testDebugUnitTest', $task, '--console=plain')
 if (-not $env:SECRET_RUN -and (Get-Command secret-run -ErrorAction SilentlyContinue)) {
   # Signing properties come from the machine vault (other/gradle-properties) as ORG_GRADLE_PROJECT_* env
   # (Gradle maps them to project properties); passwords masked, alias/store path not secret (`+`).
-  # No vault entry yet -> secret-run exits 2; fall back to ~/.gradle/gradle.properties (until plan step [6]).
+  # Exit 2 = vault/entry problem: no fallback, the build fails (no plaintext gradle.properties any more).
+
   $p = 'other/gradle-properties'
   & secret-run "ORG_GRADLE_PROJECT_VACZI_STORE_PASSWORD=$p#VACZI_STORE_PASSWORD" "ORG_GRADLE_PROJECT_VACZI_KEY_PASSWORD=$p#VACZI_KEY_PASSWORD" `
     "+ORG_GRADLE_PROJECT_VACZI_STORE_FILE=$p#VACZI_STORE_FILE" "+ORG_GRADLE_PROJECT_VACZI_KEY_ALIAS=$p#VACZI_KEY_ALIAS" `
     -- "$proj\gradlew.bat" @gradleArgs
-  if ($LASTEXITCODE -eq 2) { Write-Warning 'secret-run exit 2 (vault/entry problem) - retrying without vault'; & "$proj\gradlew.bat" @gradleArgs }
+  if ($LASTEXITCODE -eq 2) { Write-Error 'secret-run exit 2: the machine vault entry other/gradle-properties is not readable - the signed build needs it (secret-set / KeePassXC)'; exit 2 }
+
 } else {
   & "$proj\gradlew.bat" @gradleArgs
 }
