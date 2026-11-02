@@ -19,11 +19,15 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -245,14 +250,18 @@ fun AggregateHomeScreen(
                 aggregateGroupParts(aggregateZoneMembers(it, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder), perServer, coversByServer)
             }.orEmpty()
         }
+        // "Csak a bekapcsoltak" filter of the summary page; off in reorder mode (the editor needs every member).
+        var onlyOn by rememberSaveable { mutableStateOf(false) }
         AggregatePageTitle(
             if (pagerState.currentPage == 0) "Összes" else pageZone?.name ?: "",
             pageParts,
             groupActions,
+            onlyOn = onlyOn.takeIf { pagerState.currentPage == 0 && !reorderMode },
+            onOnlyOnChange = { onlyOn = it },
         )
         HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             if (page == 0) {
-                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, onMoveMember, groupActions, sceneActions, expertMode)
+                AggregateSummaryGrid(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder, actionsFor, coverActionsFor, reorderMode, onRenameZone, onDeleteZone, onMoveZone, onMoveMember, groupActions, sceneActions, expertMode, onlyOn = onlyOn && !reorderMode)
             } else {
                 // Page index 1..n maps to zones[0..n-1]; guard against a transient out-of-range page while
                 // a zone is being deleted (the pager's page count updates a frame later).
@@ -264,9 +273,18 @@ fun AggregateHomeScreen(
     }
 }
 
-/** Title above the aggregate tiles naming the current page ("Összes" or the zone) — mirrors a zone header. */
+/**
+ * Title above the aggregate tiles naming the current page ("Összes" or the zone) — mirrors a zone header.
+ * A non-null [onlyOn] shows the "Bekapcsoltak" filter chip (summary page only).
+ */
 @Composable
-private fun AggregatePageTitle(title: String, groupParts: List<ZoneGroupPart>, groupActions: GroupActions) {
+private fun AggregatePageTitle(
+    title: String,
+    groupParts: List<ZoneGroupPart>,
+    groupActions: GroupActions,
+    onlyOn: Boolean? = null,
+    onOnlyOnChange: (Boolean) -> Unit = {},
+) {
     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
             title,
@@ -276,6 +294,21 @@ private fun AggregatePageTitle(title: String, groupParts: List<ZoneGroupPart>, g
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (onlyOn != null) {
+            FilterChip(
+                selected = onlyOn,
+                onClick = { onOnlyOnChange(!onlyOn) },
+                label = { Text("Bekapcsoltak") },
+                leadingIcon = {
+                    Icon(
+                        if (onlyOn) Icons.Filled.Lightbulb else Icons.Outlined.Lightbulb,
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                },
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
         // A zone page carries the group controls (the "Összes" page has none: its zone headers do).
         ZoneGroupBar(groupParts, groupActions, menuDescription = "Csoportos vezérlés")
     }
@@ -305,19 +338,34 @@ private fun AggregateSummaryGrid(
     groupActions: GroupActions,
     sceneActions: SceneActions,
     expertMode: Boolean,
+    /** Show only members that are on ([isOn]); zones left with nothing on are skipped entirely. */
+    onlyOn: Boolean = false,
 ) {
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     // Per-zone merged members, computed once so re-collapsing/expanding a section doesn't re-merge state.
-    val membersByZone = remember(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder) {
+    val membersByZone = remember(zones, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder, onlyOn) {
         zones.associate { zone ->
-            zone.id to aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder)
+            val members = aggregateZoneMembers(zone, servers, perServer, assignments, coversByServer, hiddenByServer, memberOrder)
+            zone.id to if (onlyOn) members.filter { isOn(it.tile) } else members
         }
     }
+    val shownZones = if (onlyOn) zones.filter { membersByZone[it.id].orEmpty().isNotEmpty() } else zones
     TwoColumnLazyGrid {
         if (!reorderMode && (sceneActions.scenes.isNotEmpty() || expertMode)) {
             item(key = "scenes", span = { GridItemSpan(maxLineSpan) }) { SceneBar(sceneActions.scenes, expertMode, sceneActions) }
         }
-        zones.forEachIndexed { index, zone ->
+        if (shownZones.isEmpty()) {
+            item(key = "none-on", span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    "Semmi sincs bekapcsolva",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                )
+            }
+        }
+        shownZones.forEachIndexed { index, zone ->
             val isCollapsed = !reorderMode && collapsed[zone.id] == true
             zoneHeaderItem(
                 zone = zone,
