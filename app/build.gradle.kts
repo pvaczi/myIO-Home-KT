@@ -12,8 +12,8 @@ android {
         applicationId = "org.vaczi.myiohome"
         minSdk = 24
         targetSdk = 37
-        versionCode = 14
-        versionName = "0.2.3"
+        versionCode = 15
+        versionName = "0.2.4"
     }
 
     signingConfigs {
