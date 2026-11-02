@@ -356,16 +356,9 @@ fun MainScreen(
         )
 
     if (searchOpen) {
-        // Hidden outputs/servers are excluded regardless of expert mode; aggregate = every polled server.
+        // Hidden outputs are excluded regardless of expert mode; aggregate = every polled server.
         val searchSources = if (isAggregate) {
-            servers.filter { !it.hidden && it.id in aggregatePerServer }.map { s ->
-                val per = aggregatePerServer.getValue(s.id)
-                SearchSource(
-                    s.id, per.state, aggregateCovers[s.id].orEmpty(),
-                    expandHiddenForDisabledCovers(s.hiddenOutputs.toSet(), aggregateDisabledMembers[s.id].orEmpty()),
-                    per.status == ConnectionStatus.Connected,
-                )
-            }
+            aggregateSearchSources(servers, aggregatePerServer, aggregateCovers, aggregateDisabledMembers)
         } else {
             listOfNotNull(currentServer?.let { SearchSource(it.id, ui.state, covers, hiddenKeys, controlsEnabled) })
         }

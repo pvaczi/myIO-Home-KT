@@ -12,7 +12,11 @@ import org.vaczi.myiohome.data.model.RelayOutput
 import org.vaczi.myiohome.data.model.Sensor
 import org.vaczi.myiohome.data.model.SensorKind
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.local.MyioServer
+import org.vaczi.myiohome.ui.ConnectionStatus
+import org.vaczi.myiohome.ui.MyioUiState
 import org.vaczi.myiohome.ui.SearchSource
+import org.vaczi.myiohome.ui.aggregateSearchSources
 import org.vaczi.myiohome.ui.foldText
 import org.vaczi.myiohome.ui.searchOutputs
 
@@ -99,5 +103,26 @@ class OutputSearchTest {
         val other = ServerState(relays = listOf(RelayOutput(1, "Kávéfőző 2", on = true)))
         val hits = searchOutputs(listOf(src(id = "a"), src(id = "b", st = other)), "kavefozo", false)
         assertEquals(listOf("a", "b"), hits.map { it.serverId })
+    }
+
+    @Test
+    fun aggregateSourcesIncludeSwitcherHiddenServers() {
+        // A hidden slot only leaves the server switcher; its outputs still belong to the aggregate,
+        // so the aggregate search must cover it (a family setup typically hides every slot).
+        val servers = listOf(
+            MyioServer(name = "Fűtés", host = "h1", id = "a", hidden = true),
+            MyioServer(name = "Világítás", host = "h2", id = "b", hidden = true, hiddenOutputs = listOf("R2")),
+            MyioServer(name = "Nem pollozott", host = "h3", id = "c"),
+        )
+        val perServer = mapOf(
+            "a" to MyioUiState(status = ConnectionStatus.Connected, state = state),
+            "b" to MyioUiState(status = ConnectionStatus.Error, state = state),
+        )
+        val sources = aggregateSearchSources(servers, perServer, emptyMap(), emptyMap())
+        assertEquals(listOf("a", "b"), sources.map { it.serverId })
+        assertEquals(listOf(true, false), sources.map { it.enabled })
+        assertEquals(setOf("R2"), sources[1].hidden)
+        assertEquals(listOf("a", "b"), searchOutputs(sources, "kavefozo", false).map { it.serverId })
+        assertEquals(listOf("a"), searchOutputs(sources, "szivattyu", false).map { it.serverId })
     }
 }

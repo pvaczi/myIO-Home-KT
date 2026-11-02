@@ -1,9 +1,11 @@
 package org.vaczi.myiohome.ui
 
 import java.text.Normalizer
+import org.vaczi.myiohome.data.local.MyioServer
 import org.vaczi.myiohome.data.model.Cover
 import org.vaczi.myiohome.data.model.CoverState
 import org.vaczi.myiohome.data.model.ServerState
+import org.vaczi.myiohome.data.model.expandHiddenForDisabledCovers
 
 /**
  * Output search + "on" filter (pure). Matches a case- and accent-insensitive substring of the output name
@@ -19,6 +21,26 @@ data class SearchSource(
     val hidden: Set<String>,
     val enabled: Boolean,
 )
+
+/**
+ * Search sources of the aggregate "Otthon (összes)" view: every polled server in slot order. Output-level
+ * hides ([MyioServer.hiddenOutputs], expanded for disabled covers) apply; [MyioServer.hidden] does NOT —
+ * it only drops the slot from the server switcher, its outputs still belong to the aggregate (a family
+ * setup typically hides every slot, which used to leave the aggregate search empty).
+ */
+internal fun aggregateSearchSources(
+    servers: List<MyioServer>,
+    perServer: Map<String, MyioUiState>,
+    covers: Map<String, List<Cover>>,
+    disabledMembers: Map<String, Map<String, List<String>>>,
+): List<SearchSource> = servers.filter { it.id in perServer }.map { s ->
+    val per = perServer.getValue(s.id)
+    SearchSource(
+        s.id, per.state, covers[s.id].orEmpty(),
+        expandHiddenForDisabledCovers(s.hiddenOutputs.toSet(), disabledMembers[s.id].orEmpty()),
+        per.status == ConnectionStatus.Connected,
+    )
+}
 
 /** A search hit: the renderable tile, tagged with its owning server. */
 internal data class SearchResult(val serverId: String, val tile: HomeTile, val enabled: Boolean)
