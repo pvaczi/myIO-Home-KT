@@ -68,6 +68,10 @@ soros — a myIO szerver (3.12 alatti firmware) nem bír párhuzamos TCP-kapcsol
 szerverek felé párhuzamos. Android 17-től az app a helyi hálózati engedélyt
 (`ACCESS_LOCAL_NETWORK`) futásidőben kéri.
 
+## Adatvédelem
+
+Az app nem gyűjt és nem továbbít adatot — lásd [PRIVACY.md](PRIVACY.md).
+
 ## Licenc
 
 MIT — lásd [LICENSE](LICENSE).

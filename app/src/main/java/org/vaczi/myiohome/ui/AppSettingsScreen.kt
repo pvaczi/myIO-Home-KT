@@ -2,6 +2,7 @@ package org.vaczi.myiohome.ui
 
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import org.vaczi.myiohome.data.local.AppTheme
@@ -274,6 +276,7 @@ private fun HelpParagraph(title: String, body: String) {
 @Composable
 private fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
@@ -295,6 +298,11 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 12.dp),
                 )
+                TextButton(
+                    onClick = { runCatching { uriHandler.openUri(PRIVACY_POLICY_URL) } },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.padding(top = 8.dp),
+                ) { Text("Adatvédelmi nyilatkozat") }
             }
         },
         confirmButton = {
@@ -302,6 +310,9 @@ private fun AboutDialog(onDismiss: () -> Unit) {
         },
     )
 }
+
+/** Public privacy policy; the same URL is registered in Play Console (App content). */
+private const val PRIVACY_POLICY_URL = "https://github.com/pvaczi/myIO-Home-KT/blob/main/PRIVACY.md"
 
 @Composable
 private fun SectionHeader(text: String) {
